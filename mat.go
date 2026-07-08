@@ -1,0 +1,119 @@
+package xap
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/Vidimuslabs/xap-go/canonical"
+)
+
+// MAT is a Machine Authority Token — the cryptographically signed data
+// structure encoding a complete execution authority grant (FIG. 2, ¶0041). The
+// nine semantic fields are the MAT structure; the issuer signature itself is
+// carried by the COSE_Sign1 envelope (see SignedMAT), not this payload struct,
+// so the payload canonicalizes independently of the signature (¶0041 field
+// 136, "signatures over canonical serialization").
+type MAT struct {
+	// Version is the protocol version embedded in every MAT (¶0081).
+	Version string `cbor:"v"`
+	// ID is the artifact instance identifier (field 138 instance ID / ¶0084
+	// Authority Identifier Field).
+	ID string `cbor:"id"`
+	// ParentID references the parent artifact for a derived MAT; empty for a
+	// root MAT (monotonic delegation, ¶0057).
+	ParentID string `cbor:"parent_id,omitempty"`
+
+	MachineIdentity  MachineIdentity    `cbor:"machine_identity"`  // field 122
+	Scope            ExecutionScope     `cbor:"scope"`             // field 124
+	Boundary         PermissionBoundary `cbor:"boundary"`          // field 126
+	TrustVector      TrustVector        `cbor:"trust_vector"`      // field 128
+	ProofObligations []ProofObligation  `cbor:"proof_obligations"` // field 130
+	Constraints      []Constraint       `cbor:"constraints"`       // field 132
+	Delegation       DelegationRights   `cbor:"delegation"`        // field 134
+	Issuer           IssuerIdentity     `cbor:"issuer"`            // field 136
+	Replay           ReplayProtection   `cbor:"replay"`            // field 138
+}
+
+// SignedMAT is a MAT conveyed inside a COSE_Sign1 envelope. The envelope bytes
+// are the wire artifact; the enclosed payload is the canonical CBOR of the MAT.
+type SignedMAT struct {
+	// Envelope is the COSE_Sign1 CBOR.
+	Envelope []byte
+	// MAT is the decoded payload (populated after ParseMAT).
+	MAT MAT
+}
+
+// ConstraintDigest returns the canonical digest over the MAT's constraint set
+// (¶0084A). A commitment object's commitment-binding subfield must carry this
+// exact digest; the mismatch check is the Commitment Binding Verification Field
+// (¶0084A) that prevents binding a commitment computed from a different
+// constraint set than the one the governing MAT encodes.
+func (m *MAT) ConstraintDigest() ([]byte, error) {
+	return canonical.DigestBytes(m.Constraints)
+}
+
+// Marshal returns the canonical CBOR payload of the MAT (¶0085). This is the
+// exact byte sequence a signer signs and a verifier's digest is computed over.
+func (m *MAT) Marshal() ([]byte, error) {
+	return canonical.Marshal(m)
+}
+
+// UnmarshalMAT decodes a canonical CBOR payload into a MAT.
+func UnmarshalMAT(payload []byte) (*MAT, error) {
+	var m MAT
+	if err := canonical.Unmarshal(payload, &m); err != nil {
+		return nil, fmt.Errorf("decode MAT payload: %w", err)
+	}
+	return &m, nil
+}
+
+// ValidateStructure checks that a MAT is structurally well formed and carries a
+// recognized protocol version. It does not check signatures (see ParseMAT) or
+// lifecycle timing (see ValidateAt).
+func (m *MAT) ValidateStructure() error {
+	if m.Version != ProtocolVersion {
+		return fmt.Errorf("unsupported protocol version %q (want %q)", m.Version, ProtocolVersion)
+	}
+	if m.ID == "" {
+		return fmt.Errorf("MAT missing id")
+	}
+	if m.Issuer.ID == "" {
+		return fmt.Errorf("MAT missing issuer id")
+	}
+	if m.Replay.NotBefore == "" || m.Replay.NotAfter == "" {
+		return fmt.Errorf("MAT missing validity interval")
+	}
+	if _, err := time.Parse(time.RFC3339, m.Replay.NotBefore); err != nil {
+		return fmt.Errorf("MAT not_before: %w", err)
+	}
+	if _, err := time.Parse(time.RFC3339, m.Replay.NotAfter); err != nil {
+		return fmt.Errorf("MAT not_after: %w", err)
+	}
+	return nil
+}
+
+// Expired reports whether the MAT's validity interval does not include at.
+// Expired artifacts are unconditionally rejected (¶0065). A parse error in the
+// timestamps is treated as expired (fail closed).
+func (m *MAT) Expired(at time.Time) bool {
+	nb, err1 := time.Parse(time.RFC3339, m.Replay.NotBefore)
+	na, err2 := time.Parse(time.RFC3339, m.Replay.NotAfter)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return at.Before(nb) || at.After(na)
+}
+
+// ValidateAt checks structure and that the MAT is within its validity window at
+// the given instant. It is the lifecycle gate applied before any execution
+// evaluation (¶0065). Revocation state is external (a revocation set) and
+// checked by the engine, not by the SDK.
+func (m *MAT) ValidateAt(at time.Time) error {
+	if err := m.ValidateStructure(); err != nil {
+		return err
+	}
+	if m.Expired(at) {
+		return fmt.Errorf("MAT %s outside validity interval at %s", m.ID, at.UTC().Format(time.RFC3339))
+	}
+	return nil
+}

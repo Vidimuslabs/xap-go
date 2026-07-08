@@ -2,6 +2,7 @@ package xap
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
@@ -45,6 +46,18 @@ func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) {
 	}
 }
 
+// AddECDSAP256 registers an ECDSA P-256 verification key under the given key id.
+// It demonstrates the algorithm agility the trust anchor set is built for
+// (¶0066): the same verification path admits a second signature algorithm
+// selected per key, so an HSM-backed ECDSA issuer verifies identically.
+func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) {
+	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
+		KID:       kid,
+		Algorithm: constants.SigECDSAP256,
+		PublicKey: pub,
+	}
+}
+
 // Get returns the anchor registered under kid, if any.
 func (s *TrustAnchorSet) Get(kid []byte) (TrustAnchor, bool) {
 	a, ok := s.byKID[hex.EncodeToString(kid)]
@@ -64,9 +77,17 @@ func coseVerifierFor(a TrustAnchor) (cose.Verifier, error) {
 		}
 		// AlgorithmEdDSA is COSE alg -8 (the value formerly named AlgorithmEd25519).
 		return cose.NewVerifier(cose.AlgorithmEdDSA, pub)
+	case constants.SigECDSAP256:
+		pub, ok := a.PublicKey.(*ecdsa.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("anchor %x: algorithm ecdsa-p256 but key is %T", a.KID, a.PublicKey)
+		}
+		// AlgorithmES256 is COSE alg -7 (ECDSA w/ SHA-256 on P-256).
+		return cose.NewVerifier(cose.AlgorithmES256, pub)
 	default:
-		// ECDSA P-256 and HSM-backed verification are registered but not wired in
-		// the reference build (¶0066).
+		// HSM-backed verification uses one of the above algorithms with a key
+		// whose private half lives in the HSM (¶0066); further algorithms are
+		// added here as the registry grows.
 		return nil, fmt.Errorf("anchor %x: unsupported signature algorithm %q", a.KID, a.Algorithm)
 	}
 }

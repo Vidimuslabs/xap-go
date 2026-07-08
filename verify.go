@@ -46,19 +46,22 @@ type VerifyInput struct {
 	CommitmentEnvelope []byte
 }
 
-// Check is one named verification step and its outcome.
+// Check is one named verification step and its outcome. JSON tags match the
+// VerificationResult schema in the xap-spec OpenAPI.
 type Check struct {
-	Name   string
-	Pass   bool
-	Detail string
+	Name   string `json:"name"`
+	Pass   bool   `json:"pass"`
+	Detail string `json:"detail,omitempty"`
 }
 
-// VerificationResult is the output of the verification state machine.
+// VerificationResult is the output of the verification state machine. JSON tags
+// match the xap-spec OpenAPI VerificationResult schema (lowercase), so the
+// server's /verify response is contract-accurate.
 type VerificationResult struct {
-	Valid      bool
-	ArtifactID string
-	Decision   string
-	Checks     []Check
+	Valid      bool    `json:"valid"`
+	ArtifactID string  `json:"artifact_id"`
+	Decision   string  `json:"decision"`
+	Checks     []Check `json:"checks"`
 }
 
 // Failed returns the names of the checks that did not pass.

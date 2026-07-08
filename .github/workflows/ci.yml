@@ -7,38 +7,50 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # xap-go depends on the private xap-spec via a replace directive. Both are
+      # checked out side by side under the workspace so `replace ../xap-spec`
+      # resolves; the private sibling needs a token with read access (CI_PAT).
+      - name: Checkout xap-go
+        uses: actions/checkout@v4
         with:
-          go-version: '1.22'
-          check-latest: true
-
-      # xap-go depends on xap-spec; in CI it is checked out as a sibling and
-      # resolved via the go.mod replace directive (until xap-spec is published).
-      - name: Checkout xap-spec (sibling)
+          path: xap-go
+      - name: Checkout xap-spec (private sibling)
         uses: actions/checkout@v4
         with:
           repository: Vidimuslabs/xap-spec
-          path: ../xap-spec
+          token: ${{ secrets.CI_PAT }}
+          path: xap-spec
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: xap-go/go.mod
 
       - name: gofmt
+        working-directory: xap-go
         run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt -w .' && exit 1)
 
       - name: go vet
+        working-directory: xap-go
         run: go vet ./...
 
       - name: staticcheck
+        working-directory: xap-go
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
 
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        working-directory: xap-go
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks detect --source . --no-banner --redact --exit-code 1
 
       - name: test (race)
+        working-directory: xap-go
         run: go test -race ./...
 
       - name: coverage gate (80%)
+        working-directory: xap-go
         run: |
           go test -coverpkg=github.com/Vidimuslabs/xap-go,github.com/Vidimuslabs/xap-go/canonical \
             -coverprofile=cover.out ./...
@@ -47,4 +59,5 @@ jobs:
           awk "BEGIN {exit !(${pct} >= 80.0)}" || (echo "coverage ${pct}% below 80% gate" && exit 1)
 
       - name: conformance vectors
+        working-directory: xap-go
         run: go run ./cmd/xap vectors run

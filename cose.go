@@ -62,7 +62,8 @@ func coseVerifierFor(a TrustAnchor) (cose.Verifier, error) {
 		if !ok {
 			return nil, fmt.Errorf("anchor %x: algorithm ed25519 but key is %T", a.KID, a.PublicKey)
 		}
-		return cose.NewVerifier(cose.AlgorithmEd25519, pub)
+		// AlgorithmEdDSA is COSE alg -8 (the value formerly named AlgorithmEd25519).
+		return cose.NewVerifier(cose.AlgorithmEdDSA, pub)
 	default:
 		// ECDSA P-256 and HSM-backed verification are registered but not wired in
 		// the reference build (¶0066).

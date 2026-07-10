@@ -8,6 +8,8 @@
 package conformance
 
 import (
+	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,7 +17,9 @@ import (
 	"time"
 
 	xap "github.com/Vidimuslabs/xap-go"
+	"github.com/Vidimuslabs/xap-spec/constants"
 	"github.com/Vidimuslabs/xap-spec/vectors"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 )
 
 // Result is the outcome of running one vector.
@@ -39,13 +43,41 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 			return nil, fmt.Errorf("anchor pub %q: %w", a.KIDHex, err)
 		}
 		switch a.Alg {
-		case "ed25519":
+		case string(constants.SigEd25519):
 			set.AddEd25519(kid, pub)
+		case string(constants.SigHybridECDSAP384MLDSA65):
+			ec, ml, err := parseHybridPub(pub, a.MLDSAPubHex)
+			if err != nil {
+				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
+			}
+			set.AddHybrid(kid, ec, ml)
 		default:
 			return nil, fmt.Errorf("anchor %q: unsupported alg %q", a.KIDHex, a.Alg)
 		}
 	}
 	return set, nil
+}
+
+// parseHybridPub decodes a hybrid anchor's two public keys: the ECDSA P-384 key
+// from SPKI DER (pub_hex) and the ML-DSA-65 key from raw bytes (mldsa_pub_hex).
+func parseHybridPub(spki []byte, mldsaPubHex string) (*ecdsa.PublicKey, *mldsa65.PublicKey, error) {
+	anyPub, err := x509.ParsePKIXPublicKey(spki)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse ECDSA SPKI: %w", err)
+	}
+	ec, ok := anyPub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("ECDSA anchor key is %T, want *ecdsa.PublicKey", anyPub)
+	}
+	mlBytes, err := hex.DecodeString(mldsaPubHex)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode ML-DSA pub: %w", err)
+	}
+	ml := new(mldsa65.PublicKey)
+	if err := ml.UnmarshalBinary(mlBytes); err != nil {
+		return nil, nil, fmt.Errorf("parse ML-DSA-65 pub: %w", err)
+	}
+	return ec, ml, nil
 }
 
 // RunAll loads the embedded manifest and runs every vector.

@@ -4,10 +4,13 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
+	"math/big"
 
 	"github.com/Vidimuslabs/xap-spec/constants"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
 	cose "github.com/veraison/go-cose"
 )
 
@@ -58,6 +61,27 @@ func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) {
 	}
 }
 
+// HybridPublicKey is the pair of verification keys for a hybrid-ecdsa-p384-ml-dsa-65
+// anchor: the classical ECDSA P-384 key and the post-quantum ML-DSA-65 key. Both
+// must verify for the composite signature to be accepted (¶0066).
+type HybridPublicKey struct {
+	ECDSA *ecdsa.PublicKey
+	MLDSA *mldsa65.PublicKey
+}
+
+// AddHybrid registers a post-quantum hybrid verification key (ECDSA P-384 +
+// ML-DSA-65) under the given key id. A receipt signed by the corresponding issuer
+// is accepted only if both signature halves verify — an attacker must forge both
+// the classical and the post-quantum scheme. This gives XAP the same
+// quantum-resistance posture as the rest of the portfolio's authority artifacts.
+func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.PublicKey) {
+	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
+		KID:       kid,
+		Algorithm: constants.SigHybridECDSAP384MLDSA65,
+		PublicKey: &HybridPublicKey{ECDSA: ec, MLDSA: ml},
+	}
+}
+
 // Get returns the anchor registered under kid, if any.
 func (s *TrustAnchorSet) Get(kid []byte) (TrustAnchor, bool) {
 	a, ok := s.byKID[hex.EncodeToString(kid)]
@@ -84,12 +108,47 @@ func coseVerifierFor(a TrustAnchor) (cose.Verifier, error) {
 		}
 		// AlgorithmES256 is COSE alg -7 (ECDSA w/ SHA-256 on P-256).
 		return cose.NewVerifier(cose.AlgorithmES256, pub)
+	case constants.SigHybridECDSAP384MLDSA65:
+		pub, ok := a.PublicKey.(*HybridPublicKey)
+		if !ok {
+			return nil, fmt.Errorf("anchor %x: algorithm %s but key is %T", a.KID, a.Algorithm, a.PublicKey)
+		}
+		return &hybridCOSEVerifier{pub: pub}, nil
 	default:
 		// HSM-backed verification uses one of the above algorithms with a key
 		// whose private half lives in the HSM (¶0066); further algorithms are
 		// added here as the registry grows.
 		return nil, fmt.Errorf("anchor %x: unsupported signature algorithm %q", a.KID, a.Algorithm)
 	}
+}
+
+// hybridCOSEVerifier verifies the composite hybrid signature as a cose.Verifier.
+// The signature is the 96-byte ECDSA P-384 half (raw r‖s over SHA-384 of the
+// signed content) followed by the ML-DSA-65 signature over the same content. Both
+// halves must verify — the classical result is never trusted alone, nor the
+// post-quantum one alone (both-must-pass, ¶0066).
+type hybridCOSEVerifier struct{ pub *HybridPublicKey }
+
+func (hybridCOSEVerifier) Algorithm() cose.Algorithm {
+	return cose.Algorithm(constants.COSEAlgHybridECDSAP384MLDSA65)
+}
+
+func (v hybridCOSEVerifier) Verify(content, signature []byte) error {
+	const ecLen = constants.HybridECDSAP384SigLen
+	if len(signature) != ecLen+mldsa65.SignatureSize {
+		return cose.ErrVerification
+	}
+	// Classical half: ECDSA P-384 over SHA-384(content), raw r‖s (48 bytes each).
+	d := sha512.Sum384(content)
+	r := new(big.Int).SetBytes(signature[:ecLen/2])
+	s := new(big.Int).SetBytes(signature[ecLen/2 : ecLen])
+	ecOK := ecdsa.Verify(v.pub.ECDSA, d[:], r, s)
+	// Post-quantum half: ML-DSA-65 over content (empty context).
+	mlOK := mldsa65.Verify(v.pub.MLDSA, content, nil, signature[ecLen:])
+	if !ecOK || !mlOK {
+		return cose.ErrVerification
+	}
+	return nil
 }
 
 // verifyEnvelope decodes a COSE_Sign1 envelope, selects a trust anchor by the

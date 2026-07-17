@@ -42,9 +42,7 @@ keys are demo.
 
 ## Deployment note
 
-The artifact currently live on `vidimuslabs.com/verify`
-(`sha256 = 676052c5dd96ec3b22b63789993ed8d9e35c0e2439bc0a3368e209d6fbac8891`) was
-built before this source was committed (from a dirty tree, so it carries a VCS
-"modified" stamp) and therefore predates the reproducible recipe above. The next
-deploy should ship the deterministic `cfea85d7…` build so the live bytes match a
-clean rebuild exactly.
+The artifact live on `vidimuslabs.com/verify` matches the reproducible build above
+(`sha256 = cfea85d70e5c17107bf12ad1d053c89e210e96658b5e130a9c463be2bad19a6f`,
+deployed 2026-07-17), so the served bytes are byte-identical to a clean rebuild
+from this source. Re-run the recipe and diff the digest to confirm.

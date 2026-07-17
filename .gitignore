@@ -2,3 +2,6 @@ bin/
 dist/
 *.test
 .DS_Store
+
+# native build of ./cmd/verify-wasm (the shippable artifact is the GOOS=js wasm)
+/verify-wasm

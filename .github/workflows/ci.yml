@@ -3,6 +3,11 @@ on:
   push:
   pull_request:
 
+# Least privilege. The GITHUB_TOKEN only needs to read this repo; the private
+# sibling is fetched with a separate scoped PAT (CI_PAT) below.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,18 +15,20 @@ jobs:
       # xap-go depends on the private xap-spec via a replace directive. Both are
       # checked out side by side under the workspace so `replace ../xap-spec`
       # resolves; the private sibling needs a token with read access (CI_PAT).
+      # Actions are pinned to a full commit SHA (supply-chain hardening); the
+      # trailing comment tracks the version. Dependabot keeps these current.
       - name: Checkout xap-go
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: xap-go
       - name: Checkout xap-spec (private sibling)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Vidimuslabs/xap-spec
           token: ${{ secrets.CI_PAT }}
           path: xap-spec
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version-file: xap-go/go.mod
 
@@ -36,8 +43,14 @@ jobs:
       - name: staticcheck
         working-directory: xap-go
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
+
+      - name: govulncheck
+        working-directory: xap-go
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
       - name: gitleaks
         working-directory: xap-go

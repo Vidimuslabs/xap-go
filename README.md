@@ -82,4 +82,4 @@ See [`LICENSE.md`](LICENSE.md). License terms pending; no rights granted.
 
 ---
 
-Protected by U.S. Patent No. [PENDING ISSUANCE — 19/570,167] and pending applications. www.vidimuslabs.com/patents
+Protected by U.S. Patent No. [PENDING ISSUANCE — 19/570,167] and pending applications. [www.vidimuslabs.com/patents](https://www.vidimuslabs.com/patents)

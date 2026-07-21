@@ -30,15 +30,13 @@ cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js
 ## Embedded receipt and trust anchors
 
 `main.go` embeds a real hybrid-signed (ECDSA-P384 + ML-DSA-65) permit receipt and
-its EP/issuer trust anchors. They are regenerated deterministically by xap-engine:
-
-```sh
-go test ./engine -run TestGenProdReceipt -v   # in the xap-engine repo
-```
+its issuer/enforcement-point trust anchors, produced by the enforcement engine and
+checked in as source so the demo is fully self-contained.
 
 The anchors are **demo keys**, not the production Vidimus trust root — correct for
 a public demonstration. The receipt is genuinely hybrid-signed; only the signing
-keys are demo.
+keys are demo. What the page proves is verification, and verification needs only
+public keys — so the embedded artifact is all that is required to reproduce it.
 
 ## Deployment note
 

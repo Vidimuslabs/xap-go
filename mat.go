@@ -117,3 +117,33 @@ func (m *MAT) ValidateAt(at time.Time) error {
 	}
 	return nil
 }
+
+// CoversOperation reports whether the operation named by action and resource
+// falls within this MAT's execution scope and is not forbidden by a permission
+// boundary exclusion (¶0046, enforcement pipeline step 2).
+//
+// This is deliberately the *single* definition of the scope predicate. The
+// enforcement point applies it when deciding, and an independent verifier
+// re-applies it to the action and resource recorded in a receipt. Two
+// implementations that agreed only by coincidence would verify nothing, so both
+// sides call this.
+//
+// The numeric ceilings — max impact, max privilege delta, resource quotas — are
+// not evaluated here. They are checked against per-request magnitudes that a
+// receipt does not carry, so they remain attested by the enforcement point's
+// signature rather than independently recomputable.
+func (m *MAT) CoversOperation(action, resource string) error {
+	if len(m.Scope.Actions) > 0 && !contains(m.Scope.Actions, action) {
+		return fmt.Errorf("action %q outside execution scope", action)
+	}
+	if resource != "" && len(m.Scope.Resources) > 0 && !patternCovered(resource, m.Scope.Resources) {
+		return fmt.Errorf("resource %q outside execution scope", resource)
+	}
+	if contains(m.Boundary.Exclusions, action) {
+		return fmt.Errorf("action %q excluded by permission boundary", action)
+	}
+	if resource != "" && contains(m.Boundary.Exclusions, resource) {
+		return fmt.Errorf("resource %q excluded by permission boundary", resource)
+	}
+	return nil
+}

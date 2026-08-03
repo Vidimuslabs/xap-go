@@ -133,6 +133,35 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		}
 	}
 
+	// (4b) Scope & boundary, recomputed (¶0046). This is pipeline step 2 — the
+	// gate whose exceedance denies unconditionally regardless of every constraint
+	// outcome — so leaving it to the enforcement point's assertion would leave the
+	// strongest check in the protocol unverifiable. It is reproducible only when
+	// the receipt names the operation; receipts that omit action and resource
+	// (selective disclosure, ¶0079, or issuers predating those fields) are
+	// reported as not checked rather than silently passing.
+	if mat != nil {
+		switch {
+		case rc.Action == "" && rc.Resource == "":
+			add("scope_check", true, "not checked: receipt discloses no action or resource")
+		default:
+			err := mat.CoversOperation(rc.Action, rc.Resource)
+			permitted := constants.Decision(rc.Decision) != constants.DecisionDeny
+			// An out-of-scope operation must have been denied. A denial of an
+			// in-scope operation is legitimate — some other gate fired.
+			if err != nil && permitted {
+				add("scope_check", false,
+					fmt.Sprintf("receipt permits an operation outside scope: %v", err))
+			} else if err != nil {
+				add("scope_check", true,
+					fmt.Sprintf("denied, and outside scope: %v", err))
+			} else {
+				add("scope_check", true,
+					fmt.Sprintf("action=%q resource=%q within scope", rc.Action, rc.Resource))
+			}
+		}
+	}
+
 	// (5) Runtime context digest + reproduced constraint outcomes (¶0010,
 	// ¶0095: recompute and compare).
 	if in.ReproducedContext != nil {

@@ -22,6 +22,16 @@ type Receipt struct {
 	ID string `cbor:"id"`
 	// ArtifactID references the governing authority artifact (¶0050).
 	ArtifactID string `cbor:"artifact_id"`
+	// Action and Resource name the operation this receipt decided — ¶0097's
+	// "reference to an execution request or operation". Without them a receipt
+	// proves that a decision was made under ArtifactID against ContextDigest, but
+	// not *what* was authorized, and an independent verifier cannot reproduce the
+	// scope and boundary check of ¶0046 (pipeline step 2). Optional so that
+	// pre-existing receipts still decode and so selective disclosure (¶0071,
+	// ¶0079) can omit them; when present, Verify recomputes scope membership and
+	// the boundary exclusion check against the governing MAT.
+	Action   string `cbor:"action,omitempty"`
+	Resource string `cbor:"resource,omitempty"`
 	// Decision is the ternary execution control decision (¶0049).
 	Decision string `cbor:"decision"`
 	// Controls lists applied execution controls when Decision is

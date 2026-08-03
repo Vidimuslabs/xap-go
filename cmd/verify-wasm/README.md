@@ -18,7 +18,7 @@ revision stamp, so the output is byte-identical regardless of who builds it, fro
 which directory, or at which commit. Expected digest:
 
 ```
-sha256(xap-verify.wasm) = ea36ac62dd3550469a933f4d3ddecd8de833baa5b8add5296ba58f14d75bbc0f
+sha256(xap-verify.wasm) = f1ac6e81ec471c33fbe7c292c72823f7c77e09ef1d5f2381a4c8be6876f206e6
 ```
 
 Neither flag strips dependency versions: Go records them in the binary's build

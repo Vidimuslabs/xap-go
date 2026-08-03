@@ -18,8 +18,16 @@ revision stamp, so the output is byte-identical regardless of who builds it, fro
 which directory, or at which commit. Expected digest:
 
 ```
-sha256(xap-verify.wasm) = cfea85d70e5c17107bf12ad1d053c89e210e96658b5e130a9c463be2bad19a6f
+sha256(xap-verify.wasm) = ea36ac62dd3550469a933f4d3ddecd8de833baa5b8add5296ba58f14d75bbc0f
 ```
+
+Neither flag strips dependency versions: Go records them in the binary's build
+info, so the digest is a function of the resolved module graph as well as the
+source. Bumping a `require` changes it. The previous digest,
+`cfea85d7…d19a6f`, was the same source against `xap-spec v0.0.0`, and is what
+vidimuslabs.com currently serves — the site's copy is rebuilt and redeployed from
+this recipe as part of publication, at which point the served bytes match the
+digest above.
 
 The JS loader shim is Go's own, copied verbatim:
 

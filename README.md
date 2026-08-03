@@ -78,7 +78,12 @@ patent-pending.
 
 ## License
 
-See [`LICENSE.md`](LICENSE.md). License terms pending; no rights granted.
+Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Free to use,
+modify, and redistribute.
+
+Apache 2.0 Section 3 carries a patent grant, made here by Yandeh Holdings Inc. as
+assignee of the XAP portfolio. It reaches this Work — the verification side. The
+licensed enforcement engine is a separate work under separate terms.
 
 ---
 

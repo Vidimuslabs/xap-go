@@ -4,8 +4,10 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/sha512"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -40,25 +42,61 @@ func NewTrustAnchorSet() *TrustAnchorSet {
 	return &TrustAnchorSet{byKID: make(map[string]TrustAnchor)}
 }
 
-// AddEd25519 registers an Ed25519 verification key under the given key id.
-func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) {
+// Anchor registration rejects a malformed key instead of storing it.
+//
+// The verification path hands an anchor's key to the underlying primitive, and
+// crypto/ed25519.Verify panics on a public key that is not exactly
+// ed25519.PublicKeySize bytes. An operator who registers the wrong bytes — an
+// SPKI blob where a raw key belongs, or a zero value from an ignored decode
+// error — therefore arms a panic that an attacker fires by sending an envelope
+// naming that key id. Registration is where the operator can still act on the
+// mistake; a request arriving hours later is not. Verification validates again
+// anyway (see coseVerifierFor): this is the early gate, not the only one.
+var (
+	errNoKID      = errors.New("xap: trust anchor key id must not be empty")
+	errNilKey     = errors.New("xap: trust anchor public key must not be nil")
+	errKeyLen     = errors.New("xap: ed25519 trust anchor key must be 32 bytes")
+	errWrongCurve = errors.New("xap: trust anchor key is on the wrong curve")
+)
+
+// AddEd25519 registers an Ed25519 verification key under the given key id. It
+// returns an error if kid is empty or pub is not ed25519.PublicKeySize bytes.
+func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) error {
+	if len(kid) == 0 {
+		return errNoKID
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return fmt.Errorf("%w: got %d", errKeyLen, len(pub))
+	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
 		Algorithm: constants.SigEd25519,
 		PublicKey: pub,
 	}
+	return nil
 }
 
 // AddECDSAP256 registers an ECDSA P-256 verification key under the given key id.
 // It demonstrates the algorithm agility the trust anchor set is built for
 // (¶0066): the same verification path admits a second signature algorithm
-// selected per key, so an HSM-backed ECDSA issuer verifies identically.
-func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) {
+// selected per key, so an HSM-backed ECDSA issuer verifies identically. It
+// returns an error if kid is empty, pub is nil, or pub is not on P-256.
+func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) error {
+	if len(kid) == 0 {
+		return errNoKID
+	}
+	if pub == nil || pub.X == nil || pub.Y == nil {
+		return errNilKey
+	}
+	if pub.Curve != elliptic.P256() {
+		return fmt.Errorf("%w: want P-256", errWrongCurve)
+	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
 		Algorithm: constants.SigECDSAP256,
 		PublicKey: pub,
 	}
+	return nil
 }
 
 // HybridPublicKey is the pair of verification keys for a hybrid-ecdsa-p384-ml-dsa-65
@@ -74,12 +112,25 @@ type HybridPublicKey struct {
 // is accepted only if both signature halves verify — an attacker must forge both
 // the classical and the post-quantum scheme. This gives XAP the same
 // quantum-resistance posture as the rest of the portfolio's authority artifacts.
-func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.PublicKey) {
+// It returns an error if kid is empty, either half is nil, or the classical
+// half is not on P-384. A nil half would defeat both-must-pass by panicking
+// rather than denying.
+func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.PublicKey) error {
+	if len(kid) == 0 {
+		return errNoKID
+	}
+	if ec == nil || ec.X == nil || ec.Y == nil || ml == nil {
+		return errNilKey
+	}
+	if ec.Curve != elliptic.P384() {
+		return fmt.Errorf("%w: want P-384", errWrongCurve)
+	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
 		Algorithm: constants.SigHybridECDSAP384MLDSA65,
 		PublicKey: &HybridPublicKey{ECDSA: ec, MLDSA: ml},
 	}
+	return nil
 }
 
 // Get returns the anchor registered under kid, if any.
@@ -98,6 +149,14 @@ func coseVerifierFor(a TrustAnchor) (cose.Verifier, error) {
 		pub, ok := a.PublicKey.(ed25519.PublicKey)
 		if !ok {
 			return nil, fmt.Errorf("anchor %x: algorithm ed25519 but key is %T", a.KID, a.PublicKey)
+		}
+		// Independently of what registration allowed: ed25519.Verify panics on
+		// a key of the wrong length, and this is the last point before the key
+		// reaches it. An anchor set built by any other means than Add* — a
+		// zero-valued struct, a future constructor — must not turn an
+		// attacker-chosen key id into a crash.
+		if len(pub) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("anchor %x: %w: got %d", a.KID, errKeyLen, len(pub))
 		}
 		// AlgorithmEdDSA is COSE alg -8 (the value formerly named AlgorithmEd25519).
 		return cose.NewVerifier(cose.AlgorithmEdDSA, pub)

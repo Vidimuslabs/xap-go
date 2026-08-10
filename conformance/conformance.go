@@ -44,13 +44,17 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 		}
 		switch a.Alg {
 		case string(constants.SigEd25519):
-			set.AddEd25519(kid, pub)
+			if err := set.AddEd25519(kid, pub); err != nil {
+				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
+			}
 		case string(constants.SigHybridECDSAP384MLDSA65):
 			ec, ml, err := parseHybridPub(pub, a.MLDSAPubHex)
 			if err != nil {
 				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
 			}
-			set.AddHybrid(kid, ec, ml)
+			if err := set.AddHybrid(kid, ec, ml); err != nil {
+				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
+			}
 		default:
 			return nil, fmt.Errorf("anchor %q: unsupported alg %q", a.KIDHex, a.Alg)
 		}

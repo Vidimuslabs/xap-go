@@ -54,7 +54,9 @@ func TestECDSAP256VerificationAgility(t *testing.T) {
 
 	// With the ECDSA anchor registered, the ES256 receipt verifies.
 	anchors := xap.NewTrustAnchorSet()
-	anchors.AddECDSAP256(kid, &priv.PublicKey)
+	if err := anchors.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := xap.ParseReceipt(env, anchors); err != nil {
 		t.Fatalf("ES256 receipt failed to verify with ECDSA anchor: %v", err)
 	}
@@ -62,7 +64,9 @@ func TestECDSAP256VerificationAgility(t *testing.T) {
 	// A different ECDSA key under the same kid must fail signature verification.
 	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	wrong := xap.NewTrustAnchorSet()
-	wrong.AddECDSAP256(kid, &other.PublicKey)
+	if err := wrong.AddECDSAP256(kid, &other.PublicKey); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := xap.ParseReceipt(env, wrong); err == nil {
 		t.Fatal("ES256 receipt verified against the wrong ECDSA key")
 	}

@@ -50,7 +50,9 @@ func scopeFixture(t *testing.T) (mat []byte, anchors *xap.TrustAnchorSet, sign f
 	matEnv := signES256(t, kid, priv, mp)
 
 	set := xap.NewTrustAnchorSet()
-	set.AddECDSAP256(kid, &priv.PublicKey)
+	if err := set.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+		t.Fatal(err)
+	}
 
 	return matEnv, set, func(rc xap.Receipt) []byte {
 		t.Helper()

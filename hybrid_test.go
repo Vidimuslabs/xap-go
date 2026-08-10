@@ -85,7 +85,9 @@ func TestHybridBothMustPass(t *testing.T) {
 
 	// Both halves correct -> accept.
 	good := xap.NewTrustAnchorSet()
-	good.AddHybrid(kid, &ec.PublicKey, mlPub)
+	if err := good.AddHybrid(kid, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := xap.ParseReceipt(env, good); err != nil {
 		t.Fatalf("hybrid receipt failed to verify with correct anchor: %v", err)
 	}
@@ -93,7 +95,9 @@ func TestHybridBothMustPass(t *testing.T) {
 	// ECDSA half wrong, ML-DSA half correct -> reject (proves AND, not OR).
 	otherEC, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	badEC := xap.NewTrustAnchorSet()
-	badEC.AddHybrid(kid, &otherEC.PublicKey, mlPub)
+	if err := badEC.AddHybrid(kid, &otherEC.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := xap.ParseReceipt(env, badEC); err == nil {
 		t.Fatal("hybrid receipt verified with a WRONG ECDSA half (both-must-pass broken)")
 	}
@@ -101,7 +105,9 @@ func TestHybridBothMustPass(t *testing.T) {
 	// ML-DSA half wrong, ECDSA half correct -> reject (proves AND, not OR).
 	otherML, _, _ := mldsa65.GenerateKey(rand.Reader)
 	badML := xap.NewTrustAnchorSet()
-	badML.AddHybrid(kid, &ec.PublicKey, otherML)
+	if err := badML.AddHybrid(kid, &ec.PublicKey, otherML); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := xap.ParseReceipt(env, badML); err == nil {
 		t.Fatal("hybrid receipt verified with a WRONG ML-DSA half (both-must-pass broken)")
 	}

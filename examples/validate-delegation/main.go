@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	xap "github.com/Vidimuslabs/xap-go"
+	"github.com/Vidimuslabs/xap-go/conformance"
 	"github.com/Vidimuslabs/xap-spec/vectors"
 )
 
@@ -17,11 +18,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	anchors := xap.NewTrustAnchorSet()
-	for _, a := range m.Anchors {
-		kid, _ := hex.DecodeString(a.KIDHex)
-		pub, _ := hex.DecodeString(a.PubHex)
-		anchors.AddEd25519(kid, pub)
+	// BuildAnchors dispatches on each anchor's declared algorithm. Registering
+	// them by hand with AddEd25519 would mis-file the manifest's hybrid anchor,
+	// whose public key is an ECDSA SPKI rather than a raw Ed25519 key.
+	anchors, err := conformance.BuildAnchors(m)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	parent, err := xap.ParseMAT(load("mat_root.hex"), anchors)

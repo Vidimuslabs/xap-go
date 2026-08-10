@@ -1,6 +1,6 @@
 module github.com/Vidimuslabs/xap-go
 
-go 1.26.4
+go 1.26.5
 
 // Local development and CI check xap-spec out as a sibling. Consumers ignore
 // this line — replace directives apply only to the main module — so the require
@@ -17,5 +17,5 @@ require (
 
 require (
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 )

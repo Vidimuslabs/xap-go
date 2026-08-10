@@ -1,5 +1,12 @@
 # xap-go
 
+[![ci](https://img.shields.io/github/actions/workflow/status/Vidimuslabs/xap-go/ci.yml?branch=main&style=flat-square&logo=github&logoColor=C9A961&labelColor=475569&label=ci)](https://github.com/Vidimuslabs/xap-go/actions/workflows/ci.yml)
+[![pkg.go.dev](https://img.shields.io/badge/pkg.go.dev-reference-2D5F4F?style=flat-square&logo=go&logoColor=C9A961&labelColor=475569)](https://pkg.go.dev/github.com/Vidimuslabs/xap-go)
+[![protocol](https://img.shields.io/badge/protocol-xap--1.0.0-2D5F4F?style=flat-square&labelColor=475569)](https://github.com/Vidimuslabs/xap-spec)
+[![scope](https://img.shields.io/badge/scope-verify--only-2D5F4F?style=flat-square&labelColor=475569)](#what-it-does)
+[![signatures](https://img.shields.io/badge/signatures-hybrid_post--quantum-2D5F4F?style=flat-square&labelColor=475569)](#what-it-does)
+[![license](https://img.shields.io/badge/license-Apache--2.0-2D5F4F?style=flat-square&labelColor=475569)](LICENSE)
+
 The reference **verifier** for the Execution Authority Protocol (XAP), protocol
 version `xap-1.0.0`. Go, standard-library first, holds no signing keys.
 

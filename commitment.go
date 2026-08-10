@@ -99,6 +99,33 @@ func (c *CommitmentObject) WithinScopeOf(gov *MAT) error {
 			return fmt.Errorf("declared resource %q exceeds the governing MAT: %w", r, err)
 		}
 	}
+	// resource_targets is a second resource list on the commitment object,
+	// separate from declared_actions.resources. Two places to state resources
+	// and only one of them checked is worse than either alone, because the
+	// unchecked one is where an over-claim goes.
+	for _, r := range c.ResourceTargets {
+		if err := gov.coversResource(r); err != nil {
+			return fmt.Errorf("resource target %q exceeds the governing MAT: %w", r, err)
+		}
+	}
+	// param_ranges are constraints the agent commits to. A declared range that
+	// is LOOSER than the governing MAT's constraint of the same id is an
+	// over-claim wearing the costume of a self-restriction. A range with no
+	// counterpart in the MAT is an additional restriction the agent chose, and
+	// is always permitted.
+	govByID := make(map[string]Constraint, len(gov.Constraints))
+	for _, gc := range gov.Constraints {
+		govByID[gc.ID] = gc
+	}
+	for _, pr := range d.ParamRanges {
+		gc, ok := govByID[pr.ID]
+		if !ok {
+			continue
+		}
+		if !constraintAtLeastAsStrict(pr, gc) {
+			return fmt.Errorf("declared param range %q is looser than the governing MAT's constraint", pr.ID)
+		}
+	}
 	return nil
 }
 

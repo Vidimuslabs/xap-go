@@ -337,3 +337,63 @@ func TestDeclaredActionSetAbsenceDenies(t *testing.T) {
 		t.Fatalf("declared-unconstrained resources still denied: %v", err)
 	}
 }
+
+// FINDING 10/11 (pass 5) — the two remaining fields on the commitment that were
+// declared and never evaluated. resource_targets is a SECOND resource list,
+// separate from declared_actions.resources: two places to state resources with
+// only one checked is worse than either alone, because the unchecked one is
+// where an over-claim goes. param_ranges are constraints the agent commits to,
+// and a range looser than the governing MAT's constraint of the same id is an
+// over-claim wearing the costume of a self-restriction.
+func TestCommitmentResourceTargetsAndParamRangesMustNarrow(t *testing.T) {
+	gov := parentMAT() // actions [deploy read] over svc/*
+	gov.Constraints = []xap.Constraint{{ID: "c-zone", Type: "network_zone", Zones: []string{"prod"}}}
+
+	ok := xap.CommitmentObject{
+		DeclaredActions: xap.DeclaredActionSet{
+			ActionTypes: []string{"read"}, Resources: []string{"svc/api"},
+			ParamRanges: []xap.Constraint{{ID: "c-zone", Type: "network_zone", Zones: []string{"prod"}}},
+		},
+		ResourceTargets: []string{"svc/api"},
+	}
+	if err := ok.WithinScopeOf(&gov); err != nil {
+		t.Fatalf("a narrowing commitment was rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		mut  func(*xap.CommitmentObject)
+	}{
+		{"resource_target outside scope", func(c *xap.CommitmentObject) {
+			c.ResourceTargets = []string{"db/main"}
+		}},
+		{"resource_target via traversal", func(c *xap.CommitmentObject) {
+			c.ResourceTargets = []string{"svc/../db/main"}
+		}},
+		{"param_range widened", func(c *xap.CommitmentObject) {
+			c.DeclaredActions.ParamRanges = []xap.Constraint{
+				{ID: "c-zone", Type: "network_zone", Zones: []string{"prod", "dev"}}}
+		}},
+		{"param_range neutralised", func(c *xap.CommitmentObject) {
+			c.DeclaredActions.ParamRanges = []xap.Constraint{
+				{ID: "c-zone", Type: "network_zone"}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := ok
+			c.DeclaredActions.ParamRanges = append([]xap.Constraint(nil), ok.DeclaredActions.ParamRanges...)
+			c.ResourceTargets = append([]string(nil), ok.ResourceTargets...)
+			tc.mut(&c)
+			if err := c.WithinScopeOf(&gov); err == nil {
+				t.Fatal("commitment exceeded its governing MAT and was accepted")
+			}
+		})
+	}
+
+	// A param range with no counterpart in the MAT is an extra self-restriction.
+	extra := ok
+	extra.DeclaredActions.ParamRanges = []xap.Constraint{{ID: "agent-only", Type: "rate_limit"}}
+	if err := extra.WithinScopeOf(&gov); err != nil {
+		t.Fatalf("an additional self-restriction was rejected: %v", err)
+	}
+}

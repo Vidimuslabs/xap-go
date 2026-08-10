@@ -17,10 +17,17 @@ jobs:
       # resolves; the private sibling needs a token with read access (CI_PAT).
       # Actions are pinned to a full commit SHA (supply-chain hardening); the
       # trailing comment tracks the version. Dependabot keeps these current.
+      # fetch-depth: 0 so the gitleaks step below scans the whole history.
+      # checkout defaults to a depth-1 clone, which leaves `gitleaks detect` —
+      # a history scanner — with exactly one commit to look at. Making the
+      # repository public exposes every commit ever made, so the scan has to
+      # cover every commit ever made. Only this checkout needs it; gitleaks does
+      # not scan the xap-spec sibling.
       - name: Checkout xap-go
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: xap-go
+          fetch-depth: 0
       - name: Checkout xap-spec (private sibling)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

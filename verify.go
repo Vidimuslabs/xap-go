@@ -203,6 +203,23 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			if mat != nil {
 				add("commitment_binding", sc.Commitment.VerifyBinding(mat) == nil,
 					"commitment constraint digest vs governing MAT")
+
+				// A commitment narrows the authority it binds to; it may declare
+				// less than the MAT granted, never more. Nothing reproduced that,
+				// so COMMITMENT_SCOPE_VIOLATION was an assertion a verifier could
+				// read but not reach. Same asymmetry as scope_check: an
+				// over-claiming commitment invalidates a receipt that PERMITTED
+				// under it, while a denial is the enforcement point doing exactly
+				// what ¶0095A requires and stays consistent.
+				switch err := sc.Commitment.WithinScopeOf(mat); {
+				case err == nil:
+					add("commitment_scope", true, "declared action set within the governing MAT")
+				case constants.Decision(rc.Decision) == constants.DecisionDeny:
+					add("commitment_scope", true, fmt.Sprintf("denied, and commitment over-claims: %v", err))
+				default:
+					add("commitment_scope", false, fmt.Sprintf(
+						"receipt permits under a commitment that exceeds its governing MAT: %v", err))
+				}
 			}
 			if len(rc.CommitmentDigest) > 0 {
 				cd, derr := sc.Commitment.Digest()

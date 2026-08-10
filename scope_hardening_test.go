@@ -277,3 +277,63 @@ func TestChildCannotDeclareItselfUnconstrained(t *testing.T) {
 		t.Fatalf("child narrowing an unconstrained dimension was rejected: %v", err)
 	}
 }
+
+// FINDING 8 (pass 4) — the commitment's declared action set was signed, carried,
+// and never evaluated. A commitment declaring "delete" — outside its governing
+// MAT's scope AND named in that MAT's boundary exclusions — bound successfully,
+// so the bounded-enumeration claim rested entirely on the issuer's word and
+// COMMITMENT_SCOPE_VIOLATION was a code a verifier could read but never reach.
+func TestCommitmentCannotOverclaimItsGoverningMAT(t *testing.T) {
+	gov := parentMAT() // actions [deploy read] over svc/*
+	gov.Boundary.Exclusions = []string{"delete"}
+
+	within := xap.CommitmentObject{DeclaredActions: xap.DeclaredActionSet{
+		ActionTypes: []string{"read"}, Resources: []string{"svc/api"},
+	}}
+	if err := within.WithinScopeOf(&gov); err != nil {
+		t.Fatalf("a commitment narrower than its MAT was rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		set  xap.DeclaredActionSet
+	}{
+		{"action outside scope", xap.DeclaredActionSet{ActionTypes: []string{"deploy", "delete"}}},
+		{"resource outside scope", xap.DeclaredActionSet{ActionTypes: []string{"read"}, Resources: []string{"db/main"}}},
+		{"resource via traversal", xap.DeclaredActionSet{ActionTypes: []string{"read"}, Resources: []string{"svc/../db"}}},
+		{"declares itself unconstrained", xap.DeclaredActionSet{Unconstrained: []string{xap.ScopeDimensionActions}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := xap.CommitmentObject{DeclaredActions: tc.set}
+			if err := c.WithinScopeOf(&gov); err == nil {
+				t.Fatalf("commitment %+v exceeded its governing MAT and was accepted", tc.set)
+			}
+		})
+	}
+}
+
+// FINDING 9 — there was no membership predicate at all, so nothing could ask
+// whether an action fell inside the declared set. Absence must deny here too.
+func TestDeclaredActionSetAbsenceDenies(t *testing.T) {
+	empty := xap.DeclaredActionSet{}
+	if err := empty.Covers("anything", "anywhere"); err == nil {
+		t.Fatal("an empty declared action set admitted an operation")
+	}
+	bounded := xap.DeclaredActionSet{ActionTypes: []string{"read"}, Resources: []string{"svc/*"}}
+	if err := bounded.Covers("read", "svc/api"); err != nil {
+		t.Fatalf("declared operation rejected: %v", err)
+	}
+	if err := bounded.Covers("delete", "svc/api"); err == nil {
+		t.Fatal("undeclared action admitted")
+	}
+	if err := bounded.Covers("read", "db/main"); err == nil {
+		t.Fatal("undeclared resource admitted")
+	}
+	open := xap.DeclaredActionSet{
+		ActionTypes:   []string{"read"},
+		Unconstrained: []string{xap.ScopeDimensionResources},
+	}
+	if err := open.Covers("read", "any/resource"); err != nil {
+		t.Fatalf("declared-unconstrained resources still denied: %v", err)
+	}
+}

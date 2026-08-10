@@ -42,6 +42,68 @@ type DeclaredActionSet struct {
 	ActionTypes []string     `cbor:"action_types"`
 	Resources   []string     `cbor:"resources,omitempty"`
 	ParamRanges []Constraint `cbor:"param_ranges,omitempty"`
+	// Unconstrained names dimensions this set deliberately does not bound, using
+	// the same vocabulary and the same rule as ExecutionScope.Unconstrained: an
+	// absent list declares nothing, not everything. A commitment whose whole
+	// purpose is to be a *bounded* enumeration must not become unbounded by
+	// omission.
+	Unconstrained []string `cbor:"unconstrained,omitempty"`
+}
+
+// Covers reports whether the declared set admits the operation. An absent
+// dimension admits nothing unless declared unconstrained.
+func (d DeclaredActionSet) Covers(action, resource string) error {
+	if !contains(d.Unconstrained, ScopeDimensionActions) {
+		if len(d.ActionTypes) == 0 {
+			return fmt.Errorf("commitment declares no action types and does not declare actions unconstrained")
+		}
+		if !contains(d.ActionTypes, action) {
+			return fmt.Errorf("action %q outside the declared action set", action)
+		}
+	}
+	if !contains(d.Unconstrained, ScopeDimensionResources) && resource != "" {
+		if len(d.Resources) == 0 {
+			return fmt.Errorf("commitment declares no resources and does not declare resources unconstrained")
+		}
+		if !patternCovered(resource, d.Resources) {
+			return fmt.Errorf("resource %q outside the declared resource set", resource)
+		}
+	}
+	return nil
+}
+
+// WithinScopeOf reports whether every operation this commitment declares is one
+// the governing MAT actually authorizes (¶0095A).
+//
+// A commitment is a narrowing of the authority it binds to: an agent may commit
+// to less than it was granted, never to more. Nothing verified that. The
+// declared set was signed and carried, and COMMITMENT_SCOPE_VIOLATION existed as
+// a code an enforcement point could assert — but an independent party had no way
+// to reach the same conclusion, so the bounded-enumeration claim rested entirely
+// on the issuer's word.
+func (c *CommitmentObject) WithinScopeOf(gov *MAT) error {
+	d := c.DeclaredActions
+	if d.unconstrainsBeyond(gov.Scope, ScopeDimensionActions) {
+		return fmt.Errorf("commitment declares actions unconstrained but the governing MAT enumerates them")
+	}
+	if d.unconstrainsBeyond(gov.Scope, ScopeDimensionResources) {
+		return fmt.Errorf("commitment declares resources unconstrained but the governing MAT enumerates them")
+	}
+	for _, a := range d.ActionTypes {
+		if err := gov.CoversOperation(a, ""); err != nil {
+			return fmt.Errorf("declared action %q exceeds the governing MAT: %w", a, err)
+		}
+	}
+	for _, r := range d.Resources {
+		if err := gov.coversResource(r); err != nil {
+			return fmt.Errorf("declared resource %q exceeds the governing MAT: %w", r, err)
+		}
+	}
+	return nil
+}
+
+func (d DeclaredActionSet) unconstrainsBeyond(s ExecutionScope, dimension string) bool {
+	return contains(d.Unconstrained, dimension) && !s.unconstrains(dimension)
 }
 
 // TemporalValidity is a validity interval (RFC3339 UTC).

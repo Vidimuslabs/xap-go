@@ -132,6 +132,27 @@ func (m *MAT) ValidateAt(at time.Time) error {
 // not evaluated here. They are checked against per-request magnitudes that a
 // receipt does not carry, so they remain attested by the enforcement point's
 // signature rather than independently recomputable.
+// coversResource applies the resource half of the scope predicate alone, for
+// callers checking a resource pattern with no action in hand.
+func (m *MAT) coversResource(resource string) error {
+	if m.Scope.unconstrains(ScopeDimensionResources) {
+		if hasTraversal(resource) {
+			return fmt.Errorf("resource %q contains a traversal segment", resource)
+		}
+		return nil
+	}
+	if len(m.Scope.Resources) == 0 {
+		return fmt.Errorf("scope permits no resources and does not declare resources unconstrained")
+	}
+	if !patternCovered(resource, m.Scope.Resources) {
+		return fmt.Errorf("resource %q outside execution scope", resource)
+	}
+	if contains(m.Boundary.Exclusions, resource) {
+		return fmt.Errorf("resource %q excluded by permission boundary", resource)
+	}
+	return nil
+}
+
 // ScopeReproducible reports whether a receipt disclosing this action and
 // resource carries enough to re-evaluate every dimension the MAT constrains.
 //

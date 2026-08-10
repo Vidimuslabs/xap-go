@@ -80,6 +80,74 @@ func TestUnmarshalRejectsNonCanonical(t *testing.T) {
 	}
 }
 
+// Every option configured on decMode is a rule an attacker would like removed,
+// so each one gets a case that fails if it is dropped. A dependency upgrade that
+// silently changed a default would otherwise leave the whole suite green.
+func TestUnmarshalRejectsDuplicateMapKey(t *testing.T) {
+	// {"a": 1, "a": 2} — two entries under one key. Accepting this would let two
+	// encodings carry different values while presenting the same decoded object,
+	// and leave which value wins up to the decoder.
+	dup := []byte{0xa2, 0x61, 0x61, 0x01, 0x61, 0x61, 0x02}
+	var out map[string]int
+	if err := Unmarshal(dup, &out); err == nil {
+		t.Fatalf("expected rejection of a duplicate map key, decoded %v", out)
+	}
+}
+
+func TestUnmarshalRejectsInvalidUTF8(t *testing.T) {
+	// A text string whose single byte (0xff) is not valid UTF-8. Accepting it
+	// would admit two byte strings that compare equal after lossy decoding.
+	bad := []byte{0xa1, 0x61, 0xff, 0x01}
+	var out map[string]int
+	if err := Unmarshal(bad, &out); err == nil {
+		t.Fatalf("expected rejection of invalid UTF-8 in a text key, decoded %v", out)
+	}
+}
+
+func TestUnmarshalRejectsIndefiniteLengthOfEveryKind(t *testing.T) {
+	// The existing coverage is the indefinite-length array. The forbidden-ness is
+	// a property of the encoding form, not of one CBOR major type.
+	for _, tc := range []struct {
+		name string
+		in   []byte
+		out  any
+	}{
+		{"map", []byte{0xbf, 0x61, 0x61, 0x01, 0xff}, new(map[string]int)},
+		{"byte string", []byte{0x5f, 0x41, 0x01, 0xff}, new([]byte)},
+		{"text string", []byte{0x7f, 0x61, 0x61, 0xff}, new(string)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := Unmarshal(tc.in, tc.out); err == nil {
+				t.Fatalf("expected rejection of an indefinite-length %s", tc.name)
+			}
+		})
+	}
+}
+
+// Canonical encoding is only useful if it is a fixed point: bytes that survive
+// the strict decoder must re-encode to themselves. If decode-then-encode could
+// move the bytes, two distinct encodings of one value could both be accepted
+// and an independent verifier could not reproduce a digest from a decoded form.
+func TestCanonicalBytesAreAFixedPoint(t *testing.T) {
+	original, err := Marshal(map[string]any{
+		"zebra": 1, "alpha": []int{3, 2, 1}, "mike": "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var round map[string]any
+	if err := Unmarshal(original, &round); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Marshal(round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(original, again) {
+		t.Fatalf("canonical bytes are not a fixed point:\n in=%x\nout=%x", original, again)
+	}
+}
+
 func TestUnmarshalRejectsUnknownField(t *testing.T) {
 	type known struct {
 		A int `cbor:"a"`

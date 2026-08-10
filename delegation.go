@@ -3,6 +3,7 @@ package xap
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Monotonic delegation invariants (FIG. 5, ¶0057). Derivation of a Child MAT
@@ -58,6 +59,20 @@ func ValidateDerivation(parent, child *MAT) error {
 // and resource patterns must each be covered by the parent; an exclusion added
 // by the child only narrows and is always permitted.
 func scopeSubset(child, parent ExecutionScope) error {
+	// An absent list means "unconstrained on this dimension" — CoversOperation
+	// skips a dimension whose list is empty. Iterating the child's entries
+	// therefore reads an EMPTY child list as the empty set (vacuously a subset)
+	// when it actually denotes the universal set. A child that simply omits a
+	// dimension the parent constrained would pass invariant (i) while holding
+	// strictly more authority than its parent, which inverts monotonic
+	// delegation. Narrowing may only ever go one way: if the parent constrained
+	// a dimension, the child must constrain it too.
+	if len(parent.Actions) > 0 && len(child.Actions) == 0 {
+		return fmt.Errorf("child leaves actions unconstrained while parent constrains them")
+	}
+	if len(parent.Resources) > 0 && len(child.Resources) == 0 {
+		return fmt.Errorf("child leaves resources unconstrained while parent constrains them")
+	}
 	for _, a := range child.Actions {
 		if !contains(parent.Actions, a) {
 			return fmt.Errorf("action %q not in parent scope", a)
@@ -75,6 +90,15 @@ func scopeSubset(child, parent ExecutionScope) error {
 // parent pattern. A parent pattern "p*" covers any child pattern sharing prefix
 // "p"; an exact parent pattern covers only an equal child pattern.
 func patternCovered(r string, parents []string) bool {
+	// A prefix match on an un-normalized string is not containment. "svc/*"
+	// textually covers "svc/../db/main", which resolves outside svc entirely, so
+	// a traversal segment turns a narrowing pattern into an escape. Resources
+	// are opaque to this package — it cannot know whether the consumer resolves
+	// them as paths — so the safe reading is that a resource carrying a
+	// traversal segment is covered by nothing and fails closed.
+	if hasTraversal(r) {
+		return false
+	}
 	for _, p := range parents {
 		if p == r {
 			return true
@@ -87,6 +111,20 @@ func patternCovered(r string, parents []string) bool {
 		}
 	}
 	return false
+}
+
+// hasTraversal reports whether s contains a ".." path segment, on either
+// separator. Matching whole segments rather than the substring ".." keeps
+// legitimate names such as "svc/my..app" usable.
+func hasTraversal(s string) bool {
+	for _, sep := range []string{"/", "\\"} {
+		for _, seg := range strings.Split(s, sep) {
+			if seg == ".." {
+				return true
+			}
+		}
+	}
+	return s == ".."
 }
 
 // boundaryWithin checks child boundary ≤ parent boundary (invariant ii): every

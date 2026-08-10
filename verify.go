@@ -142,8 +142,14 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 	// reported as not checked rather than silently passing.
 	if mat != nil {
 		switch {
-		case rc.Action == "" && rc.Resource == "":
-			add("scope_check", true, "not checked: receipt discloses no action or resource")
+		case !mat.ScopeReproducible(rc.Action, rc.Resource):
+			// Not merely "both absent": a receipt naming an action while
+			// withholding the resource cannot have its resource evaluated
+			// either, and reporting that as passed would assert a gate that was
+			// never applied to the dimension in question.
+			add("scope_check", true, fmt.Sprintf(
+				"not checked: receipt discloses action=%q resource=%q, insufficient to re-evaluate the scope this MAT constrains",
+				rc.Action, rc.Resource))
 		default:
 			err := mat.CoversOperation(rc.Action, rc.Resource)
 			permitted := constants.Decision(rc.Decision) != constants.DecisionDeny

@@ -132,12 +132,34 @@ func (m *MAT) ValidateAt(at time.Time) error {
 // not evaluated here. They are checked against per-request magnitudes that a
 // receipt does not carry, so they remain attested by the enforcement point's
 // signature rather than independently recomputable.
+// ScopeReproducible reports whether a receipt disclosing this action and
+// resource carries enough to re-evaluate every dimension the MAT constrains.
+//
+// It exists because "covered" and "checked" are different claims. CoversOperation
+// skips the resource test when the receipt omits the resource, so a receipt that
+// names an action and withholds its resource would otherwise return nil — and a
+// verifier reporting that as a passing scope check would be asserting a gate it
+// never applied. Selective disclosure (¶0071, ¶0079) makes such receipts
+// legitimate; it does not make them checkable.
+func (m *MAT) ScopeReproducible(action, resource string) bool {
+	if len(m.Scope.Actions) > 0 && action == "" {
+		return false
+	}
+	if len(m.Scope.Resources) > 0 && resource == "" {
+		return false
+	}
+	return action != "" || resource != ""
+}
+
 func (m *MAT) CoversOperation(action, resource string) error {
 	if len(m.Scope.Actions) > 0 && !contains(m.Scope.Actions, action) {
 		return fmt.Errorf("action %q outside execution scope", action)
 	}
 	if resource != "" && len(m.Scope.Resources) > 0 && !patternCovered(resource, m.Scope.Resources) {
 		return fmt.Errorf("resource %q outside execution scope", resource)
+	}
+	if resource != "" && hasTraversal(resource) {
+		return fmt.Errorf("resource %q contains a traversal segment", resource)
 	}
 	if contains(m.Boundary.Exclusions, action) {
 		return fmt.Errorf("action %q excluded by permission boundary", action)

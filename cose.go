@@ -92,11 +92,25 @@ func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) error {
 	if len(kid) == 0 {
 		return errNoKID
 	}
-	if pub == nil || pub.X == nil || pub.Y == nil {
+	if pub == nil || pub.Curve == nil {
 		return errNilKey
 	}
 	if pub.Curve != elliptic.P256() {
 		return fmt.Errorf("%w: want P-256", errWrongCurve)
+	}
+	// Bytes reports an error for a point that is not on its curve, which is the
+	// check we want — but it dereferences X and Y without guarding them and
+	// segfaults on a partially-populated key, so the nil guard has to come
+	// first. Reading the coordinates is deprecated as of Go 1.26 in favour of
+	// Bytes; there is no non-deprecated way to ask whether they are set, and the
+	// deprecation targets modifying them and hand-rolling encodings, neither of
+	// which this does.
+	//lint:ignore SA1019 nil-guard for Bytes, which panics on nil coordinates
+	if pub.X == nil || pub.Y == nil {
+		return errNilKey
+	}
+	if _, err := pub.Bytes(); err != nil {
+		return fmt.Errorf("%w: %v", errNilKey, err)
 	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
@@ -126,11 +140,18 @@ func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.
 	if len(kid) == 0 {
 		return errNoKID
 	}
-	if ec == nil || ec.X == nil || ec.Y == nil || ml == nil {
+	if ec == nil || ec.Curve == nil || ml == nil {
 		return errNilKey
 	}
 	if ec.Curve != elliptic.P384() {
 		return fmt.Errorf("%w: want P-384", errWrongCurve)
+	}
+	//lint:ignore SA1019 nil-guard for Bytes, which panics on nil coordinates
+	if ec.X == nil || ec.Y == nil {
+		return errNilKey
+	}
+	if _, err := ec.Bytes(); err != nil {
+		return fmt.Errorf("%w: %v", errNilKey, err)
 	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,

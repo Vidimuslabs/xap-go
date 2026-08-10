@@ -6,23 +6,29 @@ import (
 	"testing"
 
 	xap "github.com/Vidimuslabs/xap-go"
+	"github.com/Vidimuslabs/xap-go/conformance"
 	"github.com/Vidimuslabs/xap-spec/vectors"
 )
 
 // anchorsFromManifest builds a trust anchor set from the embedded vector
 // manifest, so adversarial tests can exercise real signature verification
 // without holding any signing key.
+//
+// It delegates to conformance.BuildAnchors rather than walking m.Anchors
+// itself. A hand-rolled loop here previously registered EVERY anchor with
+// AddEd25519 regardless of its declared alg, which silently filed the hybrid
+// anchor's 120-byte ECDSA SPKI as an Ed25519 key — a bogus anchor that only
+// failed to matter because no test in this file loaded a hybrid artifact.
+// There is one correct way to turn a manifest into an anchor set; this is it.
 func anchorsFromManifest(t *testing.T) *xap.TrustAnchorSet {
 	t.Helper()
 	m, err := vectors.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	set := xap.NewTrustAnchorSet()
-	for _, a := range m.Anchors {
-		kid, _ := hex.DecodeString(a.KIDHex)
-		pub, _ := hex.DecodeString(a.PubHex)
-		set.AddEd25519(kid, pub)
+	set, err := conformance.BuildAnchors(m)
+	if err != nil {
+		t.Fatal(err)
 	}
 	return set
 }

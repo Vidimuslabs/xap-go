@@ -55,6 +55,36 @@ type ExecutionScope struct {
 	Resources []string `cbor:"resources,omitempty"`
 	// Policy is an optional opaque policy expression evaluated by the engine.
 	Policy string `cbor:"policy,omitempty"`
+	// Unconstrained names the dimensions this scope deliberately does not
+	// restrict — "actions", "resources", or both.
+	//
+	// It exists because absence is not a statement. Without it an empty list has
+	// to mean either "nothing is permitted" or "everything is permitted", and
+	// whichever is chosen, the other is what some issuer meant. Reading absence
+	// as "everything" makes the most permissive grant in the protocol the one
+	// requiring the least typing, and an artifact that says nothing about a
+	// dimension indistinguishable from one that deliberately opened it.
+	//
+	// So absence now denies, and permitting a whole dimension requires naming it
+	// here. Delegation carries the same rule: a child may declare a dimension
+	// unconstrained only where its parent already did.
+	//
+	// Optional and omitempty: absent from every canonical vector digest issued
+	// before it existed, which is what the frozen xap-1.0.0 schema requires of a
+	// within-version addition (SCHEMA.md).
+	Unconstrained []string `cbor:"unconstrained,omitempty"`
+}
+
+// ScopeDimension names a scope dimension for ExecutionScope.Unconstrained.
+const (
+	ScopeDimensionActions   = "actions"
+	ScopeDimensionResources = "resources"
+)
+
+// unconstrains reports whether this scope declares the named dimension
+// deliberately unrestricted.
+func (s ExecutionScope) unconstrains(dimension string) bool {
+	return contains(s.Unconstrained, dimension)
 }
 
 // PermissionBoundary encodes non-exceedable hard limits — a strict ceiling

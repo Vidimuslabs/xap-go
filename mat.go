@@ -142,21 +142,38 @@ func (m *MAT) ValidateAt(at time.Time) error {
 // never applied. Selective disclosure (¶0071, ¶0079) makes such receipts
 // legitimate; it does not make them checkable.
 func (m *MAT) ScopeReproducible(action, resource string) bool {
+	// Only an enumerated dimension needs the value: an unconstrained dimension
+	// permits everything and an empty one permits nothing, and neither outcome
+	// depends on what the receipt withheld. A non-empty list is the one case
+	// where the answer cannot be reached without it.
 	if len(m.Scope.Actions) > 0 && action == "" {
 		return false
 	}
 	if len(m.Scope.Resources) > 0 && resource == "" {
 		return false
 	}
-	return action != "" || resource != ""
+	return true
 }
 
 func (m *MAT) CoversOperation(action, resource string) error {
-	if len(m.Scope.Actions) > 0 && !contains(m.Scope.Actions, action) {
-		return fmt.Errorf("action %q outside execution scope", action)
+	// Absence denies. A dimension with no list permits nothing unless the scope
+	// explicitly declares it unconstrained — see ExecutionScope.Unconstrained
+	// for why the permissive reading cannot be the default.
+	if !m.Scope.unconstrains(ScopeDimensionActions) {
+		if len(m.Scope.Actions) == 0 {
+			return fmt.Errorf("scope permits no actions and does not declare actions unconstrained")
+		}
+		if !contains(m.Scope.Actions, action) {
+			return fmt.Errorf("action %q outside execution scope", action)
+		}
 	}
-	if resource != "" && len(m.Scope.Resources) > 0 && !patternCovered(resource, m.Scope.Resources) {
-		return fmt.Errorf("resource %q outside execution scope", resource)
+	if !m.Scope.unconstrains(ScopeDimensionResources) && resource != "" {
+		if len(m.Scope.Resources) == 0 {
+			return fmt.Errorf("scope permits no resources and does not declare resources unconstrained")
+		}
+		if !patternCovered(resource, m.Scope.Resources) {
+			return fmt.Errorf("resource %q outside execution scope", resource)
+		}
 	}
 	if resource != "" && hasTraversal(resource) {
 		return fmt.Errorf("resource %q contains a traversal segment", resource)

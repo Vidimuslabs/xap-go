@@ -214,3 +214,66 @@ func TestRootMustStateADelegationDepth(t *testing.T) {
 		t.Fatal("chain exceeding the stated depth was accepted")
 	}
 }
+
+// FINDING 7 (pass 3) and the durable fix. Passes 1–2 stopped a CHILD widening
+// by omission, but an issuer's own ROOT still permitted everything by saying
+// nothing — absence was still the most permissive statement available, and the
+// cheapest to write. ExecutionScope.Unconstrained inverts that: absence denies,
+// and opening a whole dimension requires naming it.
+func TestAbsentScopeDeniesUnlessDeclaredUnconstrained(t *testing.T) {
+	empty := xap.MAT{}
+	if err := empty.CoversOperation("anything", "anywhere"); err == nil {
+		t.Fatal("a MAT that says nothing about scope permitted everything")
+	}
+	// Actions enumerated, resources silent: resources permit nothing.
+	partial := xap.MAT{Scope: xap.ExecutionScope{Actions: []string{"read"}}}
+	if err := partial.CoversOperation("read", "svc/api"); err == nil {
+		t.Fatal("a silent resource dimension permitted a resource")
+	}
+	// Declaring the dimension unconstrained is what opens it.
+	open := xap.MAT{Scope: xap.ExecutionScope{
+		Actions:       []string{"read"},
+		Unconstrained: []string{xap.ScopeDimensionResources},
+	}}
+	if err := open.CoversOperation("read", "any/resource"); err != nil {
+		t.Fatalf("declared-unconstrained resources still denied: %v", err)
+	}
+	if err := open.CoversOperation("delete", "any/resource"); err == nil {
+		t.Fatal("declaring resources unconstrained also opened actions")
+	}
+}
+
+// The marker must not become an escalation primitive: a child may declare a
+// dimension unconstrained only where its parent already did.
+func TestChildCannotDeclareItselfUnconstrained(t *testing.T) {
+	parent := parentMAT()
+	child := parentMAT()
+	child.Scope = xap.ExecutionScope{
+		Actions:       []string{"read"},
+		Unconstrained: []string{xap.ScopeDimensionResources},
+	}
+	if err := xap.ValidateDerivation(&parent, &child); err == nil {
+		t.Fatal("child declared resources unconstrained while its parent enumerated them")
+	}
+
+	// Where the parent did declare it, the child may inherit it.
+	openParent := parentMAT()
+	openParent.Scope = xap.ExecutionScope{
+		Actions:       []string{"deploy", "read"},
+		Unconstrained: []string{xap.ScopeDimensionResources},
+	}
+	okChild := parentMAT()
+	okChild.Scope = xap.ExecutionScope{
+		Actions:       []string{"read"},
+		Unconstrained: []string{xap.ScopeDimensionResources},
+	}
+	if err := xap.ValidateDerivation(&openParent, &okChild); err != nil {
+		t.Fatalf("child inheriting a declared-unconstrained dimension was rejected: %v", err)
+	}
+	// And narrowing it back to an enumeration is always allowed.
+	narrowing := parentMAT()
+	narrowing.Scope = xap.ExecutionScope{Actions: []string{"read"}, Resources: []string{"svc/api"}}
+	if err := xap.ValidateDerivation(&openParent, &narrowing); err != nil {
+		t.Fatalf("child narrowing an unconstrained dimension was rejected: %v", err)
+	}
+}

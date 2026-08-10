@@ -67,20 +67,46 @@ func scopeSubset(child, parent ExecutionScope) error {
 	// strictly more authority than its parent, which inverts monotonic
 	// delegation. Narrowing may only ever go one way: if the parent constrained
 	// a dimension, the child must constrain it too.
-	if len(parent.Actions) > 0 && len(child.Actions) == 0 {
-		return fmt.Errorf("child leaves actions unconstrained while parent constrains them")
-	}
-	if len(parent.Resources) > 0 && len(child.Resources) == 0 {
-		return fmt.Errorf("child leaves resources unconstrained while parent constrains them")
-	}
-	for _, a := range child.Actions {
-		if !contains(parent.Actions, a) {
-			return fmt.Errorf("action %q not in parent scope", a)
+	// A child may declare a dimension unconstrained only where its parent already
+	// did; otherwise the marker becomes an escalation primitive rather than a
+	// statement of intent.
+	for _, d := range child.Unconstrained {
+		if !contains(parent.Unconstrained, d) {
+			return fmt.Errorf("child declares %q unconstrained but parent does not", d)
 		}
 	}
-	for _, r := range child.Resources {
-		if !patternCovered(r, parent.Resources) {
-			return fmt.Errorf("resource %q not covered by parent scope", r)
+	if !child.unconstrains(ScopeDimensionActions) && len(child.Actions) == 0 &&
+		(parent.unconstrains(ScopeDimensionActions) || len(parent.Actions) > 0) {
+		return fmt.Errorf("child states no actions and does not declare them unconstrained")
+	}
+	if !child.unconstrains(ScopeDimensionResources) && len(child.Resources) == 0 &&
+		(parent.unconstrains(ScopeDimensionResources) || len(parent.Resources) > 0) {
+		return fmt.Errorf("child states no resources and does not declare them unconstrained")
+	}
+	// A dimension the parent declared unconstrained covers anything the child
+	// enumerates: replacing "everything" with a list is a narrowing, and the
+	// membership test would otherwise compare against the parent's empty list
+	// and reject every child value.
+	if !parent.unconstrains(ScopeDimensionActions) {
+		for _, a := range child.Actions {
+			if !contains(parent.Actions, a) {
+				return fmt.Errorf("action %q not in parent scope", a)
+			}
+		}
+	}
+	if !parent.unconstrains(ScopeDimensionResources) {
+		for _, r := range child.Resources {
+			if !patternCovered(r, parent.Resources) {
+				return fmt.Errorf("resource %q not covered by parent scope", r)
+			}
+		}
+	} else {
+		// Even under an unconstrained parent, a traversal pattern is covered by
+		// nothing — the escape in finding 3 does not become legal here.
+		for _, r := range child.Resources {
+			if hasTraversal(r) {
+				return fmt.Errorf("resource %q contains a traversal segment", r)
+			}
 		}
 	}
 	return nil

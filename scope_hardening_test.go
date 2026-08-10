@@ -110,3 +110,107 @@ func TestTraversalIsNotCoveredByAPrefixPattern(t *testing.T) {
 		t.Fatal("child escaped parent scope via a traversal pattern")
 	}
 }
+
+// SECOND ADVERSARIAL PASS, same day. The first fix turned out to be local: the
+// identical "unset means unconstrained" inversion lived in three more bounds.
+// Notably boundaryWithin already handled exclusions correctly — parent
+// exclusions must survive into the child — so the correct and the inverted
+// pattern sat in the same function.
+
+// FINDING 4 — a child that dropped a quota key, or the whole map, was compared
+// against nothing. An absent quota is not a smaller quota.
+func TestChildCannotDropResourceQuotas(t *testing.T) {
+	parent := parentMAT()
+	parent.Boundary = xap.PermissionBoundary{
+		MaxImpact: 100, MaxPrivilegeDelta: 10,
+		ResourceQuotas: map[string]int64{"api": 1000},
+	}
+	base := func() xap.MAT {
+		c := parentMAT()
+		c.Scope = xap.ExecutionScope{Actions: []string{"read"}, Resources: []string{"svc/api"}}
+		c.Boundary = parent.Boundary
+		return c
+	}
+	for _, tc := range []struct {
+		name    string
+		quotas  map[string]int64
+		wantErr bool
+	}{
+		{"same quota", map[string]int64{"api": 1000}, false},
+		{"lower quota", map[string]int64{"api": 500}, false},
+		{"higher quota", map[string]int64{"api": 2000}, true},
+		{"map emptied", map[string]int64{}, true},
+		{"map dropped", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base()
+			c.Boundary.ResourceQuotas = tc.quotas
+			err := xap.ValidateDerivation(&parent, &c)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("quotas=%v -> err=%v, wantErr=%v", tc.quotas, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// FINDING 5 — a child could keep a constraint's ID while emptying its zone
+// list, neutralising it and still satisfying invariant (iii), because the empty
+// set is trivially a subset.
+func TestChildCannotNeutraliseAConstraint(t *testing.T) {
+	parent := parentMAT()
+	parent.Constraints = []xap.Constraint{{ID: "c-zone", Type: "network_zone", Zones: []string{"prod", "staging"}}}
+	base := func() xap.MAT {
+		c := parentMAT()
+		c.Scope = xap.ExecutionScope{Actions: []string{"read"}, Resources: []string{"svc/api"}}
+		return c
+	}
+	for _, tc := range []struct {
+		name    string
+		zones   []string
+		wantErr bool
+	}{
+		{"narrowed", []string{"prod"}, false},
+		{"identical", []string{"prod", "staging"}, false},
+		{"widened", []string{"prod", "staging", "dev"}, true},
+		{"emptied", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := base()
+			c.Constraints = []xap.Constraint{{ID: "c-zone", Type: "network_zone", Zones: tc.zones}}
+			err := xap.ValidateDerivation(&parent, &c)
+			if tc.wantErr != (err != nil) {
+				t.Fatalf("zones=%v -> err=%v, wantErr=%v", tc.zones, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// FINDING 6 — a root that permitted delegation without stating a depth granted
+// chains of any length: the shallowest possible statement produced the deepest
+// possible grant.
+func TestRootMustStateADelegationDepth(t *testing.T) {
+	mk := func(id, parentID string, depth int) *xap.MAT {
+		m := parentMAT()
+		m.ID, m.ParentID = id, parentID
+		m.Delegation = xap.DelegationRights{Allowed: true, MaxDepth: depth}
+		if parentID != "" {
+			m.Scope = xap.ExecutionScope{Actions: []string{"read"}, Resources: []string{"svc/api"}}
+		}
+		return &m
+	}
+	root := mk("r", "", 0) // depth unstated
+	chain := []*xap.MAT{root, mk("a", "r", 0), mk("b", "a", 0), mk("c", "b", 0)}
+	if err := xap.ValidateChain(chain); err == nil {
+		t.Fatal("a root with no stated depth granted an unbounded delegation chain")
+	}
+	// Stating a depth works, and is still enforced.
+	root2 := mk("r", "", 2)
+	ok := []*xap.MAT{root2, mk("a", "r", 2), mk("b", "a", 2)}
+	if err := xap.ValidateChain(ok); err != nil {
+		t.Fatalf("chain within a stated depth was rejected: %v", err)
+	}
+	tooDeep := []*xap.MAT{root2, mk("a", "r", 2), mk("b", "a", 2), mk("c", "b", 2)}
+	if err := xap.ValidateChain(tooDeep); err == nil {
+		t.Fatal("chain exceeding the stated depth was accepted")
+	}
+}

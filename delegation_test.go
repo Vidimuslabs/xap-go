@@ -131,7 +131,11 @@ func TestChainCycleRejected(t *testing.T) {
 	root := baseParent()
 	root.ID = "x"
 	root.ParentID = ""
-	root.Delegation.MaxDepth = 0 // unlimited depth, so depth does not fire first
+	// Depth generous enough that the cycle is what fires, not the depth bound.
+	// This deliberately does NOT use MaxDepth = 0: an unstated depth is no
+	// longer read as unlimited, because that turned the shallowest possible
+	// statement into the deepest possible grant.
+	root.Delegation.MaxDepth = 10
 
 	mid := baseChild()
 	mid.ID = "y"

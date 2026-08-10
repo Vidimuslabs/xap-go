@@ -137,13 +137,25 @@ func boundaryWithin(child, parent PermissionBoundary) error {
 	if child.MaxPrivilegeDelta > parent.MaxPrivilegeDelta {
 		return fmt.Errorf("max_privilege_delta %d > parent %d", child.MaxPrivilegeDelta, parent.MaxPrivilegeDelta)
 	}
-	for k, cq := range child.ResourceQuotas {
-		pq, ok := parent.ResourceQuotas[k]
+	// Iterating the CHILD's quotas only compares the keys the child chose to
+	// mention, so a child that drops a quota key — or the whole map — is
+	// compared against nothing and passes. That is the same inversion as an
+	// omitted scope dimension: an absent quota is not a smaller quota, it is an
+	// unstated one, and an enforcement point reading a missing key as "no limit"
+	// would grant the child more than its parent held. Every parent quota must
+	// survive into the child.
+	for k, pq := range parent.ResourceQuotas {
+		cq, ok := child.ResourceQuotas[k]
 		if !ok {
-			return fmt.Errorf("quota %q not present in parent", k)
+			return fmt.Errorf("parent quota %q dropped by child", k)
 		}
 		if cq > pq {
 			return fmt.Errorf("quota %q %d > parent %d", k, cq, pq)
+		}
+	}
+	for k := range child.ResourceQuotas {
+		if _, ok := parent.ResourceQuotas[k]; !ok {
+			return fmt.Errorf("quota %q not present in parent", k)
 		}
 	}
 	for _, pe := range parent.Exclusions {
@@ -189,7 +201,14 @@ func constraintAtLeastAsStrict(child, parent Constraint) bool {
 		// Child window must be within parent window.
 		return withinTemporal(child, parent)
 	case "network_zone":
-		// Child zones ⊆ parent zones.
+		// Child zones ⊆ parent zones — but an EMPTY child zone list is not the
+		// smallest set, it is no restriction at all, matching how an empty scope
+		// list means unconstrained. Read as a set it is trivially a subset, which
+		// would let a child keep a constraint's ID while neutralising it and still
+		// satisfy invariant (iii).
+		if len(parent.Zones) > 0 && len(child.Zones) == 0 {
+			return false
+		}
 		return subsetOf(child.Zones, parent.Zones)
 	case "param_bound":
 		return tighterBound(child, parent)
@@ -321,8 +340,14 @@ func ValidateChain(chain []*MAT) error {
 		}
 		seen[child.ID] = true
 		// Depth: the i-th derivation (1-based) must not exceed the root's
-		// declared MaxDepth.
-		if md := chain[0].Delegation.MaxDepth; md > 0 && i > md {
+		// declared MaxDepth. An unstated depth is not an unlimited one — guarding
+		// with `md > 0` turned a root that omitted MaxDepth into a root granting
+		// chains of any length, which is the deepest possible grant arising from
+		// the shallowest possible statement. A root that permits delegation must
+		// say how far.
+		if md := chain[0].Delegation.MaxDepth; md <= 0 {
+			return fmt.Errorf("%w: root %s permits delegation without stating a depth", ErrDelegationDepthExceeded, chain[0].ID)
+		} else if i > md {
 			return fmt.Errorf("%w: depth %d > allowed %d", ErrDelegationDepthExceeded, i, md)
 		}
 		if err := ValidateDerivation(parent, child); err != nil {

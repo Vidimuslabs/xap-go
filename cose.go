@@ -52,6 +52,13 @@ func NewTrustAnchorSet() *TrustAnchorSet {
 // naming that key id. Registration is where the operator can still act on the
 // mistake; a request arriving hours later is not. Verification validates again
 // anyway (see coseVerifierFor): this is the early gate, not the only one.
+// ErrNoTrustAnchor reports that an envelope named a key id the verifier has no
+// anchor for. It is distinct from a signature failure: the artifact may be
+// perfectly well-formed and correctly signed by an issuer this verifier has not
+// been configured to trust. Callers that conflate the two cannot tell "forged"
+// from "unknown issuer", which are different operational problems.
+var ErrNoTrustAnchor = errors.New("xap: no trust anchor for key id")
+
 var (
 	errNoKID      = errors.New("xap: trust anchor key id must not be empty")
 	errNilKey     = errors.New("xap: trust anchor public key must not be nil")
@@ -230,7 +237,7 @@ func verifyEnvelope(envelope []byte, anchors *TrustAnchorSet) (payload []byte, k
 	}
 	anchor, ok := anchors.Get(kid)
 	if !ok {
-		return nil, nil, fmt.Errorf("no trust anchor for key id %x", kid)
+		return nil, nil, fmt.Errorf("%w: key id %x", ErrNoTrustAnchor, kid)
 	}
 	verifier, err := coseVerifierFor(anchor)
 	if err != nil {

@@ -5,9 +5,13 @@ package xap_test
 // "unconstrained" in a protocol whose whole claim is bounded authority.
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"testing"
 
 	xap "github.com/Vidimuslabs/xap-go"
+	"github.com/Vidimuslabs/xap-spec/constants"
 )
 
 func parentMAT() xap.MAT {
@@ -395,5 +399,112 @@ func TestCommitmentResourceTargetsAndParamRangesMustNarrow(t *testing.T) {
 	extra.DeclaredActions.ParamRanges = []xap.Constraint{{ID: "agent-only", Type: "rate_limit"}}
 	if err := extra.WithinScopeOf(&gov); err != nil {
 		t.Fatalf("an additional self-restriction was rejected: %v", err)
+	}
+}
+
+// FINDING 12 (pass 6) — commitment_compliance is a set of booleans the
+// enforcement point asserts about checks it says it ran, and three of them are
+// facts an independent party can recompute. None was. A receipt could claim
+// scope_check = true for an action plainly outside its MAT's scope, and the
+// verifier read the claim back without ever testing it.
+func TestComplianceBooleansAreRecomputed(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := []byte("cmp-issuer")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+		t.Fatal(err)
+	}
+
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-c",
+		MachineIdentity: xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1, 2, 3}},
+		Issuer:          xap.IssuerIdentity{ID: "issuer", KID: kid},
+		Scope:           xap.ExecutionScope{Actions: []string{"deploy"}, Resources: []string{"svc/*"}},
+		Boundary:        xap.PermissionBoundary{MaxImpact: 10, Exclusions: []string{"delete"}},
+		Delegation:      xap.DelegationRights{Allowed: false},
+		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "i"},
+	}
+	matPayload, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv := signES256(t, kid, priv, matPayload)
+
+	cd, err := mat.ConstraintDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := xap.CommitmentObject{
+		Version: xap.ProtocolVersion, ID: "c-1",
+		SessionID:        "s",
+		DeclaredActions:  xap.DeclaredActionSet{ActionTypes: []string{"deploy"}, Resources: []string{"svc/*"}},
+		TemporalValidity: xap.TemporalValidity{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z"},
+		Binding:          xap.CommitmentBinding{ArtifactID: mat.ID, ConstraintDigest: cd},
+	}
+	commitPayload, err := commit.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitEnv := signES256(t, kid, priv, commitPayload)
+	commitDigest, err := commit.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// "delete" is outside the declared set, outside the MAT scope, AND excluded
+	// by the boundary. An honest receipt records all three as false/false/false.
+	receipt := func(cc, sc, bc bool) []byte {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: "r-1", ArtifactID: mat.ID,
+			Decision: string(constants.DecisionDeny), ContextDigest: make([]byte, 32),
+			Timing:           xap.Timing{Start: "2026-07-01T00:00:00Z", Complete: "2026-07-01T00:00:00Z"},
+			CommitmentDigest: commitDigest,
+			CommitmentCompliance: &xap.ActionCompliance{
+				Action: "delete", CommitmentCheck: cc, ScopeCheck: sc, BoundaryCheck: bc,
+				ConstraintOutcome: true,
+			},
+		}
+		payload, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signES256(t, kid, priv, payload)
+	}
+	verify := func(env []byte) xap.VerificationResult {
+		return xap.NewVerifier(anchors).Verify(xap.VerifyInput{
+			ReceiptEnvelope: env, MATEnvelope: matEnv, CommitmentEnvelope: commitEnv,
+		})
+	}
+
+	if res := verify(receipt(false, false, false)); !res.Valid {
+		t.Fatalf("an honest compliance record was rejected: %v", res.Failed())
+	}
+	for _, tc := range []struct {
+		name       string
+		cc, sc, bc bool
+		want       string
+	}{
+		{"lies about the commitment check", true, false, false, "compliance_commitment_check"},
+		{"lies about the scope check", false, true, false, "compliance_scope_check"},
+		{"lies about the boundary check", false, false, true, "compliance_boundary_check"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := verify(receipt(tc.cc, tc.sc, tc.bc))
+			if res.Valid {
+				t.Fatal("a receipt asserting a check it could not have passed was accepted")
+			}
+			var found bool
+			for _, f := range res.Failed() {
+				if f == tc.want {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("wrong check failed: got %v, want %s", res.Failed(), tc.want)
+			}
+		})
 	}
 }

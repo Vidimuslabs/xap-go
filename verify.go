@@ -221,6 +221,30 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 						"receipt permits under a commitment that exceeds its governing MAT: %v", err))
 				}
 			}
+			// commitment_compliance is a set of booleans the enforcement point
+			// asserts about checks it says it ran. Three of them are things an
+			// independent party can recompute from the commitment and the MAT,
+			// and until now none was: a receipt could claim scope_check = true
+			// for an action plainly outside its MAT's scope and nothing looked.
+			// An assertion about a reproducible fact is either right or it is a
+			// lie, so this is symmetric — unlike scope_check, a denial does not
+			// excuse a false claim.
+			if ac := rc.CommitmentCompliance; ac != nil && ac.Action != "" && mat != nil {
+				wantCommitment := sc.Commitment.DeclaredActions.Covers(ac.Action, "") == nil
+				add("compliance_commitment_check", ac.CommitmentCheck == wantCommitment,
+					fmt.Sprintf("claimed %v, recomputed %v for action %q",
+						ac.CommitmentCheck, wantCommitment, ac.Action))
+
+				wantScope := mat.CoversOperation(ac.Action, "") == nil
+				add("compliance_scope_check", ac.ScopeCheck == wantScope,
+					fmt.Sprintf("claimed %v, recomputed %v for action %q",
+						ac.ScopeCheck, wantScope, ac.Action))
+
+				wantBoundary := !contains(mat.Boundary.Exclusions, ac.Action)
+				add("compliance_boundary_check", ac.BoundaryCheck == wantBoundary,
+					fmt.Sprintf("claimed %v, recomputed %v for action %q",
+						ac.BoundaryCheck, wantBoundary, ac.Action))
+			}
 			if len(rc.CommitmentDigest) > 0 {
 				cd, derr := sc.Commitment.Digest()
 				add("commitment_digest", derr == nil && bytes.Equal(cd, rc.CommitmentDigest),

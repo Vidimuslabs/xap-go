@@ -508,3 +508,80 @@ func TestComplianceBooleansAreRecomputed(t *testing.T) {
 		})
 	}
 }
+
+// FINDING 13 (pass 7) — a receipt's provenance was signed, carried, and read by
+// nothing in the verification path. Verify() referenced it nowhere;
+// ReconstructProvenance is a separate API a caller must know to invoke, so
+// anyone verifying a receipt the ordinary way learned nothing about the chain it
+// claimed to belong to.
+func TestReceiptProvenanceMustAgreeWithItsCommitment(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid := []byte("prov-issuer")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+		t.Fatal(err)
+	}
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-p",
+		MachineIdentity: xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1}},
+		Issuer:          xap.IssuerIdentity{ID: "i", KID: kid},
+		Scope:           xap.ExecutionScope{Actions: []string{"deploy"}, Resources: []string{"svc/*"}},
+		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "i"},
+	}
+	matPayload, _ := mat.Marshal()
+	matEnv := signES256(t, kid, priv, matPayload)
+	cd, _ := mat.ConstraintDigest()
+
+	parentDigest := []byte{9, 9, 9, 9}
+	commit := xap.CommitmentObject{
+		Version: xap.ProtocolVersion, ID: "c-p", SessionID: "s",
+		DeclaredActions:  xap.DeclaredActionSet{ActionTypes: []string{"deploy"}, Resources: []string{"svc/*"}},
+		TemporalValidity: xap.TemporalValidity{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z"},
+		Binding:          xap.CommitmentBinding{ArtifactID: mat.ID, ConstraintDigest: cd},
+		Provenance:       &xap.CommitmentProvenance{ParentArtifactID: "mat-parent", ParentCommitmentDigest: parentDigest},
+	}
+	commitPayload, _ := commit.Marshal()
+	commitEnv := signES256(t, kid, priv, commitPayload)
+	commitDigest, _ := commit.Digest()
+
+	mk := func(p *xap.ProvenanceRef) []byte {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: "r-p", ArtifactID: mat.ID,
+			Decision: string(constants.DecisionPermit), ContextDigest: make([]byte, 32),
+			Timing:           xap.Timing{Start: "2026-07-01T00:00:00Z", Complete: "2026-07-01T00:00:00Z"},
+			CommitmentDigest: commitDigest, Provenance: p,
+		}
+		payload, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signES256(t, kid, priv, payload)
+	}
+	verify := func(env []byte) xap.VerificationResult {
+		return xap.NewVerifier(anchors).Verify(xap.VerifyInput{
+			ReceiptEnvelope: env, MATEnvelope: matEnv, CommitmentEnvelope: commitEnv,
+		})
+	}
+
+	honest := &xap.ProvenanceRef{ParentArtifactID: "mat-parent", ParentCommitmentDigest: parentDigest}
+	if res := verify(mk(honest)); !res.Valid {
+		t.Fatalf("a receipt agreeing with its commitment was rejected: %v", res.Failed())
+	}
+	for _, tc := range []struct {
+		name string
+		p    *xap.ProvenanceRef
+	}{
+		{"invented parent artifact", &xap.ProvenanceRef{ParentArtifactID: "mat-elsewhere", ParentCommitmentDigest: parentDigest}},
+		{"invented parent digest", &xap.ProvenanceRef{ParentArtifactID: "mat-parent", ParentCommitmentDigest: []byte{7, 7}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := verify(mk(tc.p))
+			if res.Valid {
+				t.Fatal("a receipt claiming a provenance its commitment contradicts was accepted")
+			}
+		})
+	}
+}

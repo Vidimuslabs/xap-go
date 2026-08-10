@@ -245,6 +245,29 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 					fmt.Sprintf("claimed %v, recomputed %v for action %q",
 						ac.BoundaryCheck, wantBoundary, ac.Action))
 			}
+			// A receipt's provenance and its governing commitment's provenance
+			// name the same parent, or one of them is wrong. Verify() referenced
+			// the receipt's provenance nowhere at all: the field was signed,
+			// carried, and checked only by ReconstructProvenance, which a caller
+			// has to know to invoke separately. Anyone verifying a receipt the
+			// ordinary way learned nothing about the chain it claims.
+			if rp := rc.Provenance; rp != nil {
+				cp := sc.Commitment.Provenance
+				switch {
+				case cp == nil:
+					add("provenance_agreement", false,
+						"receipt claims provenance but the governing commitment declares none")
+				case rp.ParentArtifactID != cp.ParentArtifactID:
+					add("provenance_agreement", false, fmt.Sprintf(
+						"receipt names parent artifact %q, commitment names %q",
+						rp.ParentArtifactID, cp.ParentArtifactID))
+				case !bytes.Equal(rp.ParentCommitmentDigest, cp.ParentCommitmentDigest):
+					add("provenance_agreement", false,
+						"receipt and commitment disagree on the parent commitment digest")
+				default:
+					add("provenance_agreement", true, "receipt provenance matches the governing commitment")
+				}
+			}
 			if len(rc.CommitmentDigest) > 0 {
 				cd, derr := sc.Commitment.Digest()
 				add("commitment_digest", derr == nil && bytes.Equal(cd, rc.CommitmentDigest),

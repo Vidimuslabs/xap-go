@@ -33,24 +33,92 @@ var (
 	ErrDelegationCycle = errors.New("delegation: cyclic authorization graph")
 )
 
+// Derivation fault paths name the exact rule a derivation or a chain broke.
+// The sentinel errors above identify which INVARIANT failed, which is one
+// level too coarse to hold a conformance corpus to: invariant (ii) alone has
+// six distinct ways to fail, and pinning one of them looks identical, from the
+// outside, to pinning all six. A named path makes coverage of this surface
+// measurable the way the verifier's named checks made coverage of that one
+// measurable (CF-xap-43).
+const (
+	FaultScopeUnconstrainedEscalation = "scope.unconstrained_escalation"
+	FaultScopeActionsUnstated         = "scope.actions_unstated"
+	FaultScopeResourcesUnstated       = "scope.resources_unstated"
+	FaultScopeActionNotCovered        = "scope.action_not_covered"
+	FaultScopeResourceNotCovered      = "scope.resource_not_covered"
+	FaultScopeTraversalUnconstrained  = "scope.resource_traversal_unconstrained"
+
+	FaultBoundaryMaxImpact         = "boundary.max_impact"
+	FaultBoundaryMaxPrivilegeDelta = "boundary.max_privilege_delta"
+	FaultBoundaryQuotaDropped      = "boundary.quota_dropped"
+	FaultBoundaryQuotaExceeded     = "boundary.quota_exceeded"
+	FaultBoundaryQuotaNotInParent  = "boundary.quota_not_in_parent"
+	FaultBoundaryExclusionDropped  = "boundary.exclusion_dropped"
+
+	FaultConstraintDropped      = "constraint.dropped"
+	FaultConstraintTypeMismatch = "constraint.type_mismatch"
+	// FaultConstraintLooserPrefix is completed with the constraint TYPE, because
+	// each type has its own strictness comparison and they are separate code
+	// paths. "constraint.looser.temporal" being pinned says nothing about
+	// "constraint.looser.param_bound".
+	FaultConstraintLooserPrefix = "constraint.looser."
+
+	FaultObligationMissing  = "obligation.missing"
+	FaultObligationLoosened = "obligation.freshness_loosened"
+
+	FaultDelegationNotAllowed = "delegation.not_allowed"
+
+	FaultChainEmpty         = "chain.empty"
+	FaultChainNotRoot       = "chain.not_root"
+	FaultChainLinkBreak     = "chain.link_break"
+	FaultChainCycle         = "chain.cycle"
+	FaultChainDepthUnstated = "chain.depth_unstated"
+	FaultChainDepthExceeded = "chain.depth_exceeded"
+)
+
+// DerivationFault carries the named rule a derivation broke, alongside the
+// human-readable reason. It wraps rather than replaces the sentinel errors, so
+// errors.Is against ErrScopeNotSubset and friends keeps working.
+type DerivationFault struct {
+	Path string
+	Err  error
+}
+
+func (f *DerivationFault) Error() string { return f.Err.Error() }
+func (f *DerivationFault) Unwrap() error { return f.Err }
+
+// FaultPath returns the named rule err reports breaking, or "" if err is not a
+// derivation fault.
+func FaultPath(err error) string {
+	var f *DerivationFault
+	if errors.As(err, &f) {
+		return f.Path
+	}
+	return ""
+}
+
+func faultf(path, format string, args ...any) error {
+	return &DerivationFault{Path: path, Err: fmt.Errorf(format, args...)}
+}
+
 // ValidateDerivation checks the four monotonic invariants for a single
 // parent→child derivation step, plus delegation permission and depth (¶0057,
 // ¶0041 field 134). It does not walk a chain; see ValidateChain.
 func ValidateDerivation(parent, child *MAT) error {
 	if !parent.Delegation.Allowed {
-		return ErrDelegationNotAllowed
+		return &DerivationFault{Path: FaultDelegationNotAllowed, Err: ErrDelegationNotAllowed}
 	}
 	if err := scopeSubset(child.Scope, parent.Scope); err != nil {
-		return fmt.Errorf("%w: %v", ErrScopeNotSubset, err)
+		return fmt.Errorf("%w: %w", ErrScopeNotSubset, err)
 	}
 	if err := boundaryWithin(child.Boundary, parent.Boundary); err != nil {
-		return fmt.Errorf("%w: %v", ErrBoundaryExceeded, err)
+		return fmt.Errorf("%w: %w", ErrBoundaryExceeded, err)
 	}
 	if err := constraintsStricter(child.Constraints, parent.Constraints); err != nil {
-		return fmt.Errorf("%w: %v", ErrConstraintNotStricter, err)
+		return fmt.Errorf("%w: %w", ErrConstraintNotStricter, err)
 	}
 	if err := obligationsSuperset(child.ProofObligations, parent.ProofObligations); err != nil {
-		return fmt.Errorf("%w: %v", ErrObligationsNotSuperset, err)
+		return fmt.Errorf("%w: %w", ErrObligationsNotSuperset, err)
 	}
 	return nil
 }
@@ -72,16 +140,16 @@ func scopeSubset(child, parent ExecutionScope) error {
 	// statement of intent.
 	for _, d := range child.Unconstrained {
 		if !contains(parent.Unconstrained, d) {
-			return fmt.Errorf("child declares %q unconstrained but parent does not", d)
+			return faultf(FaultScopeUnconstrainedEscalation, "child declares %q unconstrained but parent does not", d)
 		}
 	}
 	if !child.unconstrains(ScopeDimensionActions) && len(child.Actions) == 0 &&
 		(parent.unconstrains(ScopeDimensionActions) || len(parent.Actions) > 0) {
-		return fmt.Errorf("child states no actions and does not declare them unconstrained")
+		return faultf(FaultScopeActionsUnstated, "child states no actions and does not declare them unconstrained")
 	}
 	if !child.unconstrains(ScopeDimensionResources) && len(child.Resources) == 0 &&
 		(parent.unconstrains(ScopeDimensionResources) || len(parent.Resources) > 0) {
-		return fmt.Errorf("child states no resources and does not declare them unconstrained")
+		return faultf(FaultScopeResourcesUnstated, "child states no resources and does not declare them unconstrained")
 	}
 	// A dimension the parent declared unconstrained covers anything the child
 	// enumerates: replacing "everything" with a list is a narrowing, and the
@@ -90,14 +158,14 @@ func scopeSubset(child, parent ExecutionScope) error {
 	if !parent.unconstrains(ScopeDimensionActions) {
 		for _, a := range child.Actions {
 			if !contains(parent.Actions, a) {
-				return fmt.Errorf("action %q not in parent scope", a)
+				return faultf(FaultScopeActionNotCovered, "action %q not in parent scope", a)
 			}
 		}
 	}
 	if !parent.unconstrains(ScopeDimensionResources) {
 		for _, r := range child.Resources {
 			if !patternCovered(r, parent.Resources) {
-				return fmt.Errorf("resource %q not covered by parent scope", r)
+				return faultf(FaultScopeResourceNotCovered, "resource %q not covered by parent scope", r)
 			}
 		}
 	} else {
@@ -105,7 +173,7 @@ func scopeSubset(child, parent ExecutionScope) error {
 		// nothing — the escape in finding 3 does not become legal here.
 		for _, r := range child.Resources {
 			if hasTraversal(r) {
-				return fmt.Errorf("resource %q contains a traversal segment", r)
+				return faultf(FaultScopeTraversalUnconstrained, "resource %q contains a traversal segment", r)
 			}
 		}
 	}
@@ -158,10 +226,10 @@ func hasTraversal(s string) bool {
 // exceed parent quotas, and child exclusions include all parent exclusions.
 func boundaryWithin(child, parent PermissionBoundary) error {
 	if child.MaxImpact > parent.MaxImpact {
-		return fmt.Errorf("max_impact %d > parent %d", child.MaxImpact, parent.MaxImpact)
+		return faultf(FaultBoundaryMaxImpact, "max_impact %d > parent %d", child.MaxImpact, parent.MaxImpact)
 	}
 	if child.MaxPrivilegeDelta > parent.MaxPrivilegeDelta {
-		return fmt.Errorf("max_privilege_delta %d > parent %d", child.MaxPrivilegeDelta, parent.MaxPrivilegeDelta)
+		return faultf(FaultBoundaryMaxPrivilegeDelta, "max_privilege_delta %d > parent %d", child.MaxPrivilegeDelta, parent.MaxPrivilegeDelta)
 	}
 	// Iterating the CHILD's quotas only compares the keys the child chose to
 	// mention, so a child that drops a quota key — or the whole map — is
@@ -173,20 +241,20 @@ func boundaryWithin(child, parent PermissionBoundary) error {
 	for k, pq := range parent.ResourceQuotas {
 		cq, ok := child.ResourceQuotas[k]
 		if !ok {
-			return fmt.Errorf("parent quota %q dropped by child", k)
+			return faultf(FaultBoundaryQuotaDropped, "parent quota %q dropped by child", k)
 		}
 		if cq > pq {
-			return fmt.Errorf("quota %q %d > parent %d", k, cq, pq)
+			return faultf(FaultBoundaryQuotaExceeded, "quota %q %d > parent %d", k, cq, pq)
 		}
 	}
 	for k := range child.ResourceQuotas {
 		if _, ok := parent.ResourceQuotas[k]; !ok {
-			return fmt.Errorf("quota %q not present in parent", k)
+			return faultf(FaultBoundaryQuotaNotInParent, "quota %q not present in parent", k)
 		}
 	}
 	for _, pe := range parent.Exclusions {
 		if !contains(child.Exclusions, pe) {
-			return fmt.Errorf("parent exclusion %q dropped by child", pe)
+			return faultf(FaultBoundaryExclusionDropped, "parent exclusion %q dropped by child", pe)
 		}
 	}
 	return nil
@@ -206,10 +274,17 @@ func constraintsStricter(child, parent []Constraint) error {
 	for _, p := range parent {
 		c, ok := childByID[p.ID]
 		if !ok {
-			return fmt.Errorf("parent constraint %q dropped by child", p.ID)
+			return faultf(FaultConstraintDropped, "parent constraint %q dropped by child", p.ID)
+		}
+		// Type first, and separately. A child constraint of a different type is
+		// not a looser instance of the parent's rule, it is a different rule
+		// wearing the parent's id, and the two are worth telling apart.
+		if c.Type != p.Type {
+			return faultf(FaultConstraintTypeMismatch,
+				"constraint %q is type %q, parent is %q", p.ID, c.Type, p.Type)
 		}
 		if !constraintAtLeastAsStrict(c, p) {
-			return fmt.Errorf("constraint %q looser than parent", p.ID)
+			return faultf(FaultConstraintLooserPrefix+p.Type, "constraint %q looser than parent", p.ID)
 		}
 	}
 	return nil
@@ -334,10 +409,10 @@ func obligationsSuperset(child, parent []ProofObligation) error {
 	for _, p := range parent {
 		c, ok := childByCat[p.Category]
 		if !ok {
-			return fmt.Errorf("parent obligation %q missing from child", p.Category)
+			return faultf(FaultObligationMissing, "parent obligation %q missing from child", p.Category)
 		}
 		if c.MaxAgeSeconds > p.MaxAgeSeconds {
-			return fmt.Errorf("obligation %q freshness %ds looser than parent %ds", p.Category, c.MaxAgeSeconds, p.MaxAgeSeconds)
+			return faultf(FaultObligationLoosened, "obligation %q freshness %ds looser than parent %ds", p.Category, c.MaxAgeSeconds, p.MaxAgeSeconds)
 		}
 	}
 	return nil
@@ -350,19 +425,19 @@ func obligationsSuperset(child, parent []ProofObligation) error {
 // element's ID.
 func ValidateChain(chain []*MAT) error {
 	if len(chain) == 0 {
-		return fmt.Errorf("delegation: empty chain")
+		return faultf(FaultChainEmpty, "delegation: empty chain")
 	}
 	if chain[0].ParentID != "" {
-		return fmt.Errorf("delegation: chain[0] %s is not a root (has parent %s)", chain[0].ID, chain[0].ParentID)
+		return faultf(FaultChainNotRoot, "delegation: chain[0] %s is not a root (has parent %s)", chain[0].ID, chain[0].ParentID)
 	}
 	seen := map[string]bool{chain[0].ID: true}
 	for i := 1; i < len(chain); i++ {
 		parent, child := chain[i-1], chain[i]
 		if child.ParentID != parent.ID {
-			return fmt.Errorf("delegation: chain break at %d: %s parent is %q, expected %q", i, child.ID, child.ParentID, parent.ID)
+			return faultf(FaultChainLinkBreak, "delegation: chain break at %d: %s parent is %q, expected %q", i, child.ID, child.ParentID, parent.ID)
 		}
 		if seen[child.ID] {
-			return fmt.Errorf("%w: %s repeats", ErrDelegationCycle, child.ID)
+			return faultf(FaultChainCycle, "%w: %s repeats", ErrDelegationCycle, child.ID)
 		}
 		seen[child.ID] = true
 		// Depth: the i-th derivation (1-based) must not exceed the root's
@@ -372,12 +447,12 @@ func ValidateChain(chain []*MAT) error {
 		// the shallowest possible statement. A root that permits delegation must
 		// say how far.
 		if md := chain[0].Delegation.MaxDepth; md <= 0 {
-			return fmt.Errorf("%w: root %s permits delegation without stating a depth", ErrDelegationDepthExceeded, chain[0].ID)
+			return faultf(FaultChainDepthUnstated, "%w: root %s permits delegation without stating a depth", ErrDelegationDepthExceeded, chain[0].ID)
 		} else if i > md {
-			return fmt.Errorf("%w: depth %d > allowed %d", ErrDelegationDepthExceeded, i, md)
+			return faultf(FaultChainDepthExceeded, "%w: depth %d > allowed %d", ErrDelegationDepthExceeded, i, md)
 		}
 		if err := ValidateDerivation(parent, child); err != nil {
-			return fmt.Errorf("delegation step %d (%s→%s): %w", i, parent.ID, child.ID, err)
+			return fmt.Errorf("delegation step %d (%s\u2192%s): %w", i, parent.ID, child.ID, err)
 		}
 	}
 	return nil

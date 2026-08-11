@@ -151,3 +151,48 @@ func TestNotPerformedIsPinnedForEveryCapableCheck(t *testing.T) {
 		}
 	}
 }
+
+// The delegation surface is reached by direct calls rather than by the receipt
+// verification state machine, so TestEveryVerifierCheckIsPinnedByAVector says
+// nothing about it. Measured before this gate: six strictness paths could be
+// deleted from ValidateDerivation with the corpus at 72/72 and the verifier
+// gate green — MaxPrivilegeDelta, an oversized child quota, constraint type
+// mismatch, and the param_bound, resource_state and latency_bound comparisons.
+// Two of those comparisons had never executed at all, the corpus minting no
+// constraint of either type.
+func TestEveryDerivationPathIsPinnedByAVector(t *testing.T) {
+	m := load(t)
+	anchors, err := BuildAnchors(m)
+	if err != nil {
+		t.Fatalf("build anchors: %v", err)
+	}
+	reached, err := DerivationCoverage(anchors, m)
+	if err != nil {
+		t.Fatalf("derivation coverage: %v", err)
+	}
+
+	declared := make(map[string]bool, len(DerivationPaths))
+	var unpinned []string
+	for _, p := range DerivationPaths {
+		declared[p] = true
+		if !reached[p] {
+			unpinned = append(unpinned, p)
+		}
+	}
+	sort.Strings(unpinned)
+	for _, p := range unpinned {
+		t.Errorf("derivation path %q is reached by no vector: an implementation that "+
+			"omits the rule reproduces every expected outcome", p)
+	}
+
+	var undeclared []string
+	for p := range reached {
+		if !declared[p] {
+			undeclared = append(undeclared, p)
+		}
+	}
+	sort.Strings(undeclared)
+	for _, p := range undeclared {
+		t.Errorf("vector reaches derivation path %q, which is not in DerivationPaths", p)
+	}
+}

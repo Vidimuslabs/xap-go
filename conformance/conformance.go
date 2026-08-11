@@ -485,3 +485,77 @@ func namedCheck(res xap.VerificationResult, name string) (xap.Check, bool) {
 	}
 	return xap.Check{}, false
 }
+
+// DerivationPaths is every named failure path a delegation or delegation_chain
+// vector can hold an implementation to. It plays the role VerifierChecks plays
+// for the receipt-verification surface, and for the same measured reason: with
+// only the four invariant sentinels to aim at, six delegation strictness paths
+// could be deleted from the SDK while the corpus and the completeness gate both
+// stayed green (CF-xap-43).
+//
+// chain.empty is deliberately absent: a vector expressing it would carry no
+// mat_files, which the runner rejects before ValidateChain ever sees it.
+var DerivationPaths = []string{
+	xap.FaultScopeUnconstrainedEscalation,
+	xap.FaultScopeActionsUnstated,
+	xap.FaultScopeResourcesUnstated,
+	xap.FaultScopeActionNotCovered,
+	xap.FaultScopeResourceNotCovered,
+	xap.FaultScopeTraversalUnconstrained,
+
+	xap.FaultBoundaryMaxImpact,
+	xap.FaultBoundaryMaxPrivilegeDelta,
+	xap.FaultBoundaryQuotaDropped,
+	xap.FaultBoundaryQuotaExceeded,
+	xap.FaultBoundaryQuotaNotInParent,
+	xap.FaultBoundaryExclusionDropped,
+
+	xap.FaultConstraintDropped,
+	xap.FaultConstraintTypeMismatch,
+	xap.FaultConstraintLooserPrefix + "temporal",
+	xap.FaultConstraintLooserPrefix + "network_zone",
+	xap.FaultConstraintLooserPrefix + "rate_limit",
+	xap.FaultConstraintLooserPrefix + "latency_bound",
+	xap.FaultConstraintLooserPrefix + "param_bound",
+	xap.FaultConstraintLooserPrefix + "resource_state",
+
+	xap.FaultObligationMissing,
+	xap.FaultObligationLoosened,
+
+	xap.FaultDelegationNotAllowed,
+
+	xap.FaultChainNotRoot,
+	xap.FaultChainLinkBreak,
+	xap.FaultChainCycle,
+	xap.FaultChainDepthUnstated,
+	xap.FaultChainDepthExceeded,
+}
+
+// DerivationCoverage runs every delegation and delegation_chain vector that
+// expects a rejection and reports which named failure paths were reached.
+func DerivationCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (map[string]bool, error) {
+	reached := map[string]bool{}
+	for _, v := range m.Vectors {
+		if v.Expect != "invalid" {
+			continue
+		}
+		var err error
+		switch v.Kind {
+		case "delegation":
+			err = delegationAccepts(v, anchors)
+		case "delegation_chain":
+			err = delegationChainAccepts(v, anchors)
+		default:
+			continue
+		}
+		if err == nil {
+			return nil, fmt.Errorf("vector %q expects a rejection but was accepted", v.Name)
+		}
+		if p := xap.FaultPath(err); p != "" {
+			reached[p] = true
+		} else {
+			return nil, fmt.Errorf("vector %q was rejected without a named fault path: %v", v.Name, err)
+		}
+	}
+	return reached, nil
+}

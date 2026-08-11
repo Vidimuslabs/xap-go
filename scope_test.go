@@ -164,8 +164,11 @@ func TestVerifyReportsScopeNotCheckedWhenUndisclosed(t *testing.T) {
 	if !c.Pass {
 		t.Errorf("undisclosed operation should not fail the scope check: %s", c.Detail)
 	}
-	if c.Detail == "" || !contains(c.Detail, "not checked") {
-		t.Errorf("scope_check must say it was not performed; detail=%q", c.Detail)
+	// The distinction §9 insists on is now a value rather than a phrase in a
+	// human-readable string. Asserting on the prose was asserting on wording.
+	if c.Status != xap.CheckNotPerformed {
+		t.Errorf("scope_check status = %q, want %q; detail=%q",
+			c.Status, xap.CheckNotPerformed, c.Detail)
 	}
 }
 

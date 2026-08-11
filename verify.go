@@ -46,12 +46,33 @@ type VerifyInput struct {
 	CommitmentEnvelope []byte
 }
 
+// CheckStatus is the outcome of one verification step. A check is not a
+// boolean. "Not performed" is a third answer, and §9 spends a paragraph on why
+// it must not be collapsed into the first: reporting an unavailable check as
+// passed asserts a gate that was never applied. Pass carried both meanings, so
+// the distinction the spec insists on existed only in the detail string.
+type CheckStatus string
+
+const (
+	// CheckPassed: the check ran and the receipt satisfied it.
+	CheckPassed CheckStatus = "passed"
+	// CheckFailed: the check ran and the receipt did not satisfy it.
+	CheckFailed CheckStatus = "failed"
+	// CheckNotPerformed: the inputs did not permit re-evaluating this check.
+	// The receipt is not refuted by it and is not vouched for by it either.
+	CheckNotPerformed CheckStatus = "not_performed"
+)
+
 // Check is one named verification step and its outcome. JSON tags match the
 // VerificationResult schema in the xap-spec OpenAPI.
 type Check struct {
-	Name   string `json:"name"`
-	Pass   bool   `json:"pass"`
-	Detail string `json:"detail,omitempty"`
+	Name string `json:"name"`
+	// Pass is false only for CheckFailed. A not-performed check does not
+	// invalidate a receipt, so it reports true here — which is exactly why
+	// Status exists alongside it.
+	Pass   bool        `json:"pass"`
+	Status CheckStatus `json:"status"`
+	Detail string      `json:"detail,omitempty"`
 }
 
 // VerificationResult is the output of the verification state machine. JSON tags
@@ -89,12 +110,22 @@ func ReceiptEnvelopeHash(envelope []byte) []byte {
 // non-passing Check with Valid=false.
 func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 	res := VerificationResult{Valid: true}
-	add := func(name string, pass bool, detail string) {
-		res.Checks = append(res.Checks, Check{Name: name, Pass: pass, Detail: detail})
-		if !pass {
+	addStatus := func(name string, status CheckStatus, detail string) {
+		res.Checks = append(res.Checks, Check{
+			Name: name, Pass: status != CheckFailed, Status: status, Detail: detail,
+		})
+		if status == CheckFailed {
 			res.Valid = false
 		}
 	}
+	add := func(name string, pass bool, detail string) {
+		if pass {
+			addStatus(name, CheckPassed, detail)
+			return
+		}
+		addStatus(name, CheckFailed, detail)
+	}
+	notPerformed := func(name, detail string) { addStatus(name, CheckNotPerformed, detail) }
 
 	// (1) Receipt signature (¶0095: validate cryptographic signatures).
 	sr, err := ParseReceipt(in.ReceiptEnvelope, v.Anchors)
@@ -147,8 +178,8 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			// withholding the resource cannot have its resource evaluated
 			// either, and reporting that as passed would assert a gate that was
 			// never applied to the dimension in question.
-			add("scope_check", true, fmt.Sprintf(
-				"not checked: receipt discloses action=%q resource=%q, insufficient to re-evaluate the scope this MAT constrains",
+			notPerformed("scope_check", fmt.Sprintf(
+				"receipt discloses action=%q resource=%q, insufficient to re-evaluate the scope this MAT constrains",
 				rc.Action, rc.Resource))
 		default:
 			err := mat.CoversOperation(rc.Action, rc.Resource)
@@ -195,10 +226,10 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 	if mat != nil && len(mat.ProofObligations) > 0 {
 		permitted := constants.Decision(rc.Decision) != constants.DecisionDeny
 		if len(rc.EvidenceRefs) == 0 {
-			add("evidence_covers_obligations", true,
-				"not checked: receipt discloses no evidence references")
-			add("evidence_asserted_fresh", true,
-				"not checked: receipt discloses no evidence references")
+			notPerformed("evidence_covers_obligations",
+				"receipt discloses no evidence references")
+			notPerformed("evidence_asserted_fresh",
+				"receipt discloses no evidence references")
 		} else {
 			byCategory := make(map[string]EvidenceRef, len(rc.EvidenceRefs))
 			for _, e := range rc.EvidenceRefs {

@@ -168,6 +168,76 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		}
 	}
 
+	// (4c) Integrity evidence — the two reproducible parts, and only those
+	// (§9, ¶0048). Pipeline step 4 validates evidence against the MAT's proof
+	// obligations at execution time, and most of that is not re-observable: the
+	// receipt carries a digest of the evidence rather than the evidence, and
+	// EvidenceRef has no timestamp, so max_age_seconds has nothing to evaluate
+	// against and the freshness determination itself cannot be reproduced.
+	//
+	// Two things can. Every category the MAT obliges must appear among the
+	// receipt's evidence references, and each such reference must record
+	// fresh = true. Neither says the evidence was good — they say the receipt's
+	// own account of it is internally consistent with the artifact governing
+	// it. The check names avoid claiming otherwise: nothing here reports
+	// integrity as verified, which §9 forbids in as many words.
+	//
+	// Disclosure follows the same rule as the scope check. A receipt that
+	// discloses no evidence references at all has exercised selective
+	// disclosure (¶0071, ¶0079), and the checks are reported NOT PERFORMED
+	// rather than failed. Once it discloses any, it is making a claim about
+	// coverage that can be read, and partial disclosure is not a pass.
+	//
+	// And the same asymmetry as scope_check and commitment_scope: a receipt
+	// that DENIES on uncovered or stale evidence is the enforcement point doing
+	// exactly what ¶0048 requires. Only a receipt that permitted anyway is
+	// self-inconsistent.
+	if mat != nil && len(mat.ProofObligations) > 0 {
+		permitted := constants.Decision(rc.Decision) != constants.DecisionDeny
+		if len(rc.EvidenceRefs) == 0 {
+			add("evidence_covers_obligations", true,
+				"not checked: receipt discloses no evidence references")
+			add("evidence_asserted_fresh", true,
+				"not checked: receipt discloses no evidence references")
+		} else {
+			byCategory := make(map[string]EvidenceRef, len(rc.EvidenceRefs))
+			for _, e := range rc.EvidenceRefs {
+				byCategory[e.Category] = e
+			}
+			var uncovered, stale []string
+			for _, o := range mat.ProofObligations {
+				e, ok := byCategory[o.Category]
+				if !ok {
+					uncovered = append(uncovered, o.Category)
+					continue
+				}
+				if !e.Fresh {
+					stale = append(stale, o.Category)
+				}
+			}
+			switch {
+			case len(uncovered) == 0:
+				add("evidence_covers_obligations", true, "every obliged category is referenced")
+			case !permitted:
+				add("evidence_covers_obligations", true,
+					fmt.Sprintf("denied, and obligations unreferenced: %v", uncovered))
+			default:
+				add("evidence_covers_obligations", false, fmt.Sprintf(
+					"receipt permits without referencing obliged evidence: %v", uncovered))
+			}
+			switch {
+			case len(stale) == 0:
+				add("evidence_asserted_fresh", true, "every referenced obligation records fresh=true")
+			case !permitted:
+				add("evidence_asserted_fresh", true,
+					fmt.Sprintf("denied, and evidence records fresh=false: %v", stale))
+			default:
+				add("evidence_asserted_fresh", false, fmt.Sprintf(
+					"receipt permits on evidence its own reference records as not fresh: %v", stale))
+			}
+		}
+	}
+
 	// (5) Runtime context digest + reproduced constraint outcomes (¶0010,
 	// ¶0095: recompute and compare).
 	if in.ReproducedContext != nil {

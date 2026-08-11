@@ -115,6 +115,8 @@ func dispatch(v vectors.Vector, anchors *xap.TrustAnchorSet) (bool, string) {
 		return checkExpect(wantValid, matAccepts(v, anchors))
 	case "delegation":
 		return checkExpect(wantValid, delegationAccepts(v, anchors))
+	case "delegation_chain":
+		return checkExpect(wantValid, delegationChainAccepts(v, anchors))
 	case "canon":
 		return canonMatches(v)
 	case "receipt":
@@ -179,6 +181,33 @@ func delegationAccepts(v vectors.Vector, anchors *xap.TrustAnchorSet) error {
 		return err
 	}
 	return xap.ValidateDerivation(&parent.MAT, &child.MAT)
+}
+
+// delegationChainAccepts walks a whole delegation chain, root-first. A chain is
+// not the concatenation of its steps: depth allowance is measured against the
+// root rather than the immediate parent, acyclicity is a property of the set of
+// identities visited, and "chain[0] is a root" is a statement about the sequence
+// itself. delegationAccepts can express none of them, so ValidateChain was
+// covered by the reference SDK's own tests and by nothing an independent
+// implementation could reproduce.
+func delegationChainAccepts(v vectors.Vector, anchors *xap.TrustAnchorSet) error {
+	if len(v.MATFiles) == 0 {
+		return fmt.Errorf("delegation_chain vector %q carries no mat_files", v.Name)
+	}
+	chain := make([]*xap.MAT, 0, len(v.MATFiles))
+	for _, f := range v.MATFiles {
+		env, err := loadHex(f)
+		if err != nil {
+			return err
+		}
+		sm, err := xap.ParseMAT(env, anchors)
+		if err != nil {
+			return err
+		}
+		m := sm.MAT
+		chain = append(chain, &m)
+	}
+	return xap.ValidateChain(chain)
 }
 
 func canonMatches(v vectors.Vector) (bool, string) {

@@ -4,6 +4,8 @@ import (
 	"sort"
 	"testing"
 
+	xap "github.com/Vidimuslabs/xap-go"
+
 	"github.com/Vidimuslabs/xap-spec/constants"
 	"github.com/Vidimuslabs/xap-spec/vectors"
 )
@@ -37,7 +39,7 @@ func TestEveryVerifierCheckIsPinnedByAVector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build anchors: %v", err)
 	}
-	emitted, failed, err := CheckCoverage(anchors, m)
+	emitted, failed, notPerformed, err := CheckCoverage(anchors, m)
 	if err != nil {
 		t.Fatalf("check coverage: %v", err)
 	}
@@ -57,6 +59,23 @@ func TestEveryVerifierCheckIsPinnedByAVector(t *testing.T) {
 	for _, c := range unpinned {
 		t.Errorf("check %q is never driven to failure by any vector: an implementation "+
 			"that omits it reproduces every expected outcome", c)
+	}
+
+	// A check that reports not-performed must say so in the declared list, or
+	// nobody was ever asked to pin the distinction for it.
+	var undeclaredNP []string
+	npCapable := make(map[string]bool, len(NotPerformedCapableChecks))
+	for _, c := range NotPerformedCapableChecks {
+		npCapable[c] = true
+	}
+	for c := range notPerformed {
+		if !npCapable[c] {
+			undeclaredNP = append(undeclaredNP, c)
+		}
+	}
+	sort.Strings(undeclaredNP)
+	for _, c := range undeclaredNP {
+		t.Errorf("check %q reports not_performed but is not in NotPerformedCapableChecks", c)
 	}
 
 	// The other direction, which is what catches a check added later. An
@@ -107,6 +126,28 @@ func TestEveryVectorKindIsInterpreted(t *testing.T) {
 	for _, v := range load(t).Vectors {
 		if !known[v.Kind] {
 			t.Errorf("vector %q has kind %q, which no runner branch interprets", v.Name, v.Kind)
+		}
+	}
+}
+
+// "Not performed" and "passed" both produce a receipt that verifies, so the
+// overall expectation of a vector cannot distinguish them. An implementation
+// that reports an unavailable check as passed — asserting a gate it never
+// applied, which is what §9 step 5 forbids in as many words — reproduces every
+// expected outcome unless a vector pins the status itself.
+func TestNotPerformedIsPinnedForEveryCapableCheck(t *testing.T) {
+	pinned := make(map[string]bool)
+	for _, v := range load(t).Vectors {
+		for name, want := range v.ExpectChecks {
+			if want == string(xap.CheckNotPerformed) {
+				pinned[name] = true
+			}
+		}
+	}
+	for _, c := range NotPerformedCapableChecks {
+		if !pinned[c] {
+			t.Errorf("check %q can report not_performed and no vector pins it: an "+
+				"implementation reporting it as passed still reproduces every expected outcome", c)
 		}
 	}
 }

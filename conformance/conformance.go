@@ -260,28 +260,43 @@ var VerifierChecks = []string{
 	"commitment_digest",
 }
 
+// NotPerformedCapableChecks are the checks that can legitimately report
+// CheckNotPerformed, because the inputs may not permit re-evaluating them.
+// Every one must be pinned as not_performed by some vector's expect_checks:
+// the distinction between "not performed" and "passed" produces a receipt that
+// verifies either way, so nothing else can hold an implementation to it.
+var NotPerformedCapableChecks = []string{
+	"scope_check",
+	"evidence_covers_obligations",
+	"evidence_asserted_fresh",
+}
+
 // CheckCoverage runs every receipt vector through the verifier and reports
-// which checks were emitted at all, and which were driven to a failure by some
-// vector. A check that is only ever observed passing is a check no vector
-// defends: an implementation omitting it reproduces every expected outcome.
-func CheckCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (emitted, failed map[string]bool, err error) {
-	emitted, failed = map[string]bool{}, map[string]bool{}
+// which checks were emitted at all, which were driven to a failure by some
+// vector, and which ever reported not-performed. A check that is only ever
+// observed passing is a check no vector defends: an implementation omitting it
+// reproduces every expected outcome.
+func CheckCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (emitted, failed, notPerformed map[string]bool, err error) {
+	emitted, failed, notPerformed = map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, v := range m.Vectors {
 		if v.Kind != "receipt" || v.ReceiptFile == "" {
 			continue
 		}
 		in, err := buildVerifyInput(v, anchors)
 		if err != nil {
-			return nil, nil, fmt.Errorf("vector %q: %w", v.Name, err)
+			return nil, nil, nil, fmt.Errorf("vector %q: %w", v.Name, err)
 		}
 		for _, c := range xap.NewVerifier(anchors).Verify(in).Checks {
 			emitted[c.Name] = true
-			if !c.Pass {
+			switch c.Status {
+			case xap.CheckFailed:
 				failed[c.Name] = true
+			case xap.CheckNotPerformed:
+				notPerformed[c.Name] = true
 			}
 		}
 	}
-	return emitted, failed, nil
+	return emitted, failed, notPerformed, nil
 }
 
 // buildVerifyInput assembles the optional inputs a receipt vector supplies.
@@ -360,6 +375,21 @@ func receiptVerifies(v vectors.Vector, anchors *xap.TrustAnchorSet, wantValid bo
 	res := xap.NewVerifier(anchors).Verify(in)
 	if res.Valid != wantValid {
 		return false, fmt.Sprintf("verify.Valid=%v want %v (failed: %s)", res.Valid, wantValid, strings.Join(res.Failed(), ","))
+	}
+
+	// When the vector pins individual check statuses, confirm each one. This is
+	// how a vector states WHY it reached its outcome rather than only that it
+	// did — and the only way to pin "not performed", which produces a receipt
+	// that verifies exactly as a spurious pass would.
+	for name, want := range v.ExpectChecks {
+		got, ok := namedCheck(res, name)
+		if !ok {
+			return false, fmt.Sprintf("expected check %q was not emitted at all", name)
+		}
+		if string(got.Status) != want {
+			return false, fmt.Sprintf("check %q status=%q want %q (%s)",
+				name, got.Status, want, got.Detail)
+		}
 	}
 
 	// When the vector names an expected rationale/error code, confirm the
@@ -444,4 +474,14 @@ func loadContext(name string) (*xap.RuntimeContext, error) {
 		return nil, err
 	}
 	return &ctx, nil
+}
+
+// namedCheck returns the check with the given name, if the verifier emitted it.
+func namedCheck(res xap.VerificationResult, name string) (xap.Check, bool) {
+	for _, c := range res.Checks {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return xap.Check{}, false
 }

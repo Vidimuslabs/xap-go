@@ -229,6 +229,99 @@ func canonMatches(v vectors.Vector) (bool, string) {
 	return true, ""
 }
 
+// VerifierChecks is every check name xap.Verify can emit. It is the contract
+// the completeness gate enforces in both directions: no check may exist without
+// a vector that fails it, and no check may be emitted without appearing here.
+// Adding a check to the verifier and forgetting the vector is the failure this
+// list exists to make impossible — a suite only certifies what a wrong
+// implementation fails.
+var VerifierChecks = []string{
+	"receipt_signature",
+	"receipt_version",
+	"decision_valid",
+	"rationale_codes_known",
+	"timing_within_bound",
+	"mat_signature",
+	"artifact_binding",
+	"scope_check",
+	"evidence_covers_obligations",
+	"evidence_asserted_fresh",
+	"context_digest",
+	"constraint_outcomes",
+	"decision_consistent",
+	"chain_link",
+	"commitment_signature",
+	"commitment_binding",
+	"commitment_scope",
+	"compliance_commitment_check",
+	"compliance_scope_check",
+	"compliance_boundary_check",
+	"provenance_agreement",
+	"commitment_digest",
+}
+
+// CheckCoverage runs every receipt vector through the verifier and reports
+// which checks were emitted at all, and which were driven to a failure by some
+// vector. A check that is only ever observed passing is a check no vector
+// defends: an implementation omitting it reproduces every expected outcome.
+func CheckCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (emitted, failed map[string]bool, err error) {
+	emitted, failed = map[string]bool{}, map[string]bool{}
+	for _, v := range m.Vectors {
+		if v.Kind != "receipt" || v.ReceiptFile == "" {
+			continue
+		}
+		in, err := buildVerifyInput(v, anchors)
+		if err != nil {
+			return nil, nil, fmt.Errorf("vector %q: %w", v.Name, err)
+		}
+		for _, c := range xap.NewVerifier(anchors).Verify(in).Checks {
+			emitted[c.Name] = true
+			if !c.Pass {
+				failed[c.Name] = true
+			}
+		}
+	}
+	return emitted, failed, nil
+}
+
+// buildVerifyInput assembles the optional inputs a receipt vector supplies.
+func buildVerifyInput(v vectors.Vector, anchors *xap.TrustAnchorSet) (xap.VerifyInput, error) {
+	in := xap.VerifyInput{}
+	var err error
+	if in.ReceiptEnvelope, err = loadHex(v.ReceiptFile); err != nil {
+		return in, err
+	}
+	if v.MATFile != "" {
+		if in.MATEnvelope, err = loadHex(v.MATFile); err != nil {
+			return in, err
+		}
+	}
+	if v.CommitmentFile != "" {
+		if in.CommitmentEnvelope, err = loadHex(v.CommitmentFile); err != nil {
+			return in, err
+		}
+	}
+	if v.ContextFile != "" {
+		ctx, err := loadContext(v.ContextFile)
+		if err != nil {
+			return in, err
+		}
+		in.ReproducedContext = ctx
+	}
+	if v.PriorReceiptFile != "" {
+		penv, err := loadHex(v.PriorReceiptFile)
+		if err != nil {
+			return in, err
+		}
+		pr, err := xap.ParseReceipt(penv, anchors)
+		if err != nil {
+			return in, fmt.Errorf("prior receipt: %w", err)
+		}
+		in.PriorReceipt = pr
+	}
+	return in, nil
+}
+
 func receiptVerifies(v vectors.Vector, anchors *xap.TrustAnchorSet, wantValid bool) (bool, string) {
 	in := xap.VerifyInput{}
 	var err error

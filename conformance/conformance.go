@@ -66,6 +66,11 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 		default:
 			return nil, fmt.Errorf("anchor %q: unsupported alg %q", a.KIDHex, a.Alg)
 		}
+		if a.Subject != "" {
+			if err := set.SetSubject(kid, a.Subject); err != nil {
+				return nil, fmt.Errorf("anchor %q subject: %w", a.KIDHex, err)
+			}
+		}
 	}
 	return set, nil
 }

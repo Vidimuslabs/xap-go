@@ -52,6 +52,13 @@ type TrustAnchor struct {
 	KID       []byte
 	Algorithm constants.SignatureAlg
 	PublicKey crypto.PublicKey
+	// Subject is the identity the operator asserts this key belongs to — an
+	// enforcement point name, for instance. Optional, and it is the ONLY thing
+	// that can make a receipt's self-declared enforcement_point mean anything:
+	// the enforcement point chooses both the name it writes and the key it signs
+	// with, so a receipt cannot bind its own name. An operator can, because the
+	// anchor set is the operator's statement about keys.
+	Subject string
 	// Roles are the artifact kinds this key may sign. An anchor with no roles
 	// may sign nothing: registration requires the operator to say what the key
 	// is for, because the alternative default — "anything" — is the most
@@ -138,6 +145,9 @@ func (s *TrustAnchorSet) AddEd25519(kid []byte, roles []SignerRole, pub ed25519.
 	if len(pub) != ed25519.PublicKeySize {
 		return fmt.Errorf("%w: got %d", errKeyLen, len(pub))
 	}
+	if err := s.claim(kid); err != nil {
+		return err
+	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
 		Algorithm: constants.SigEd25519,
@@ -178,6 +188,9 @@ func (s *TrustAnchorSet) AddECDSAP256(kid []byte, roles []SignerRole, pub *ecdsa
 	}
 	if _, err := pub.Bytes(); err != nil {
 		return fmt.Errorf("%w: %v", errNilKey, err)
+	}
+	if err := s.claim(kid); err != nil {
+		return err
 	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
@@ -224,6 +237,9 @@ func (s *TrustAnchorSet) AddHybrid(kid []byte, roles []SignerRole, ec *ecdsa.Pub
 	if _, err := ec.Bytes(); err != nil {
 		return fmt.Errorf("%w: %v", errNilKey, err)
 	}
+	if err := s.claim(kid); err != nil {
+		return err
+	}
 	s.byKID[hex.EncodeToString(kid)] = TrustAnchor{
 		KID:       kid,
 		Algorithm: constants.SigHybridECDSAP384MLDSA65,
@@ -233,10 +249,47 @@ func (s *TrustAnchorSet) AddHybrid(kid []byte, roles []SignerRole, ec *ecdsa.Pub
 	return nil
 }
 
+// ErrAnchorExists reports an attempt to register a key id that is already
+// registered.
+var ErrAnchorExists = errors.New("xap: a trust anchor is already registered for this key id")
+
+// SetSubject records the identity an operator asserts a key belongs to.
+//
+// Optional. Where it is set, a receipt naming a different enforcement point is
+// refused; where it is not, the name is unverifiable and reported NOT PERFORMED
+// — which is honest under the round-3 rule, because the missing input is the
+// OPERATOR's and not something the artifact withheld.
+func (s *TrustAnchorSet) SetSubject(kid []byte, subject string) error {
+	k := hex.EncodeToString(kid)
+	a, ok := s.byKID[k]
+	if !ok {
+		return fmt.Errorf("%w: key id %x", ErrNoTrustAnchor, kid)
+	}
+	a.Subject = subject
+	s.byKID[k] = a
+	return nil
+}
+
 // Get returns the anchor registered under kid, if any.
 func (s *TrustAnchorSet) Get(kid []byte) (TrustAnchor, bool) {
 	a, ok := s.byKID[hex.EncodeToString(kid)]
 	return a, ok
+}
+
+// claim reserves a key id, refusing one already registered.
+//
+// Registration used to assign into the map, so registering a key twice silently
+// REPLACED its roles — and the natural way to grant a second role, or the
+// natural result of two config sources describing one key, is to register it
+// again. An operator adding a role would have removed the ones already granted,
+// with nothing reported. Roles are the foundation under artifact-kind
+// separation, so quietly narrowing or widening them is the worst available
+// failure mode. A key states all of its roles in one registration.
+func (s *TrustAnchorSet) claim(kid []byte) error {
+	if _, exists := s.byKID[hex.EncodeToString(kid)]; exists {
+		return fmt.Errorf("%w: key id %x", ErrAnchorExists, kid)
+	}
+	return nil
 }
 
 // Len reports the number of registered anchors.

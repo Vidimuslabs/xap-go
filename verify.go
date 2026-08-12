@@ -272,21 +272,37 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		add("receipt_final", true, "receipt records a settled decision")
 	}
 
-	// The receipt names its enforcement point, and until now that name had
-	// nothing to bind it to — a label, not evidence. The kid is checked against
-	// the key that actually verified the envelope, exactly as step 4 does for
-	// the MAT's issuer identity.
+	// The receipt names its enforcement point. Binding that NAME needs a
+	// statement from someone other than the enforcement point, because it
+	// chooses both the name it writes and the key it signs with — comparing its
+	// declared kid against its own signing key compares two values it picked,
+	// and can only catch a signer harming itself. The operator's anchor set is
+	// the outside statement: where an anchor records a subject, a receipt naming
+	// a different enforcement point is refused.
+	//
+	// One emission, in precedence order. A kid that contradicts the signing key
+	// is definite and settles it; otherwise an unpinned anchor means the missing
+	// input is the OPERATOR's rather than something the artifact withheld, which
+	// is not-performed under the rule in §9.1.
+	anchor, haveAnchor := v.Anchors.Get(sr.SigningKID)
 	switch {
-	case len(rc.EnforcementPointKID) == 0:
-		notPerformed("enforcement_point_binding",
-			"receipt names no enforcement point key id")
-	case !bytes.Equal(rc.EnforcementPointKID, sr.SigningKID):
+	case len(rc.EnforcementPointKID) > 0 && !bytes.Equal(rc.EnforcementPointKID, sr.SigningKID):
 		add("enforcement_point_binding", false, fmt.Sprintf(
-			"receipt claims enforcement point key %x but was signed by %x",
+			"receipt declares enforcement point key %x but was signed by %x",
 			rc.EnforcementPointKID, sr.SigningKID))
+	case !haveAnchor || anchor.Subject == "":
+		notPerformed("enforcement_point_binding",
+			"the verifying anchor records no subject, so the receipt's enforcement point name is unverifiable")
+	case rc.EnforcementPoint == "":
+		add("enforcement_point_binding", false, fmt.Sprintf(
+			"the signing key is registered to %q and the receipt names no enforcement point", anchor.Subject))
+	case rc.EnforcementPoint != anchor.Subject:
+		add("enforcement_point_binding", false, fmt.Sprintf(
+			"receipt claims enforcement point %q but was signed by the key registered to %q",
+			rc.EnforcementPoint, anchor.Subject))
 	default:
 		add("enforcement_point_binding", true, fmt.Sprintf(
-			"enforcement point %q signed with the key it names", rc.EnforcementPoint))
+			"enforcement point %q signed by the key the operator registered to it", rc.EnforcementPoint))
 	}
 
 	// (3) Timing against the bound the receipt declares (¶0053, ¶0088). This is

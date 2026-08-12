@@ -263,3 +263,83 @@ func TestArtifactKindsAreNotInterchangeable(t *testing.T) {
 		t.Fatalf("ParseCommitment rejected a commitment: %v", err)
 	}
 }
+
+// A receipt's enforcement_point name cannot be bound by the receipt: the
+// enforcement point chooses both the name it writes and the key it signs with,
+// so comparing its declared kid against its own signing key compares two values
+// it picked. Binding needs a statement from someone else, and the operator's
+// anchor set is that statement.
+func TestEnforcementPointNameBindsToTheOperatorsAnchor(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("ep-key")
+
+	build := func(subject string) *xap.TrustAnchorSet {
+		s := xap.NewTrustAnchorSet()
+		if err := s.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+			t.Fatal(err)
+		}
+		if subject != "" {
+			if err := s.SetSubject(kid, subject); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return s
+	}
+	receipt := func(name string) []byte {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: "r", ArtifactID: "m",
+			Decision: "permit", ContextDigest: []byte{1},
+			EnforcementPoint: name,
+			Timing:           xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z"},
+		}
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+
+	// Pinned by the operator: an arbitrary claimed name is refused.
+	res := xap.NewVerifier(build("ep-1")).Verify(xap.VerifyInput{ReceiptEnvelope: receipt("ep-highly-trusted")})
+	if c := checkNamed(t, res, "enforcement_point_binding"); c.Status != xap.CheckFailed {
+		t.Errorf("an arbitrary enforcement point name passed: %q (%s)", c.Status, c.Detail)
+	}
+	// The honest name passes.
+	res = xap.NewVerifier(build("ep-1")).Verify(xap.VerifyInput{ReceiptEnvelope: receipt("ep-1")})
+	if c := checkNamed(t, res, "enforcement_point_binding"); c.Status != xap.CheckPassed {
+		t.Errorf("the registered name was rejected: %q (%s)", c.Status, c.Detail)
+	}
+	// Unpinned: the missing input is the operator's, so not performed.
+	res = xap.NewVerifier(build("")).Verify(xap.VerifyInput{ReceiptEnvelope: receipt("anything")})
+	if c := checkNamed(t, res, "enforcement_point_binding"); c.Status != xap.CheckNotPerformed {
+		t.Errorf("an unpinned anchor gave %q, want not_performed (%s)", c.Status, c.Detail)
+	}
+}
+
+// Registration used to assign into the map, so registering a key twice silently
+// REPLACED its roles — and registering again is the natural way to grant a
+// second role. Roles are the foundation under artifact-kind separation, so
+// quietly narrowing them is the worst available failure mode.
+func TestReRegisteringAKeyIsRefused(t *testing.T) {
+	ec, mlPub, _ := hybridKeys(t)
+	kid := []byte("k")
+	s := xap.NewTrustAnchorSet()
+	if err := s.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddHybrid(kid, []xap.SignerRole{xap.RoleAgent}, &ec.PublicKey, mlPub); !errors.Is(err, xap.ErrAnchorExists) {
+		t.Fatalf("re-registration returned %v, want ErrAnchorExists", err)
+	}
+	a, _ := s.Get(kid)
+	if !a.Permits(xap.RoleIssuer) || a.Permits(xap.RoleAgent) {
+		t.Fatalf("the original registration did not survive: %v", a.Roles)
+	}
+	// Both roles at once is how a key gets two.
+	s2 := xap.NewTrustAnchorSet()
+	if err := s2.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleAgent}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := s2.Get(kid); !b.Permits(xap.RoleIssuer) || !b.Permits(xap.RoleAgent) {
+		t.Fatal("a key registered for two roles does not hold both")
+	}
+}

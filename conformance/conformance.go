@@ -269,8 +269,7 @@ var VerifierChecks = []string{
 	"receipt_final",
 	"enforcement_point_binding",
 	"policy_digest",
-	"replay_nonce_unseen",
-	"commitment_session_unseen",
+	"replay_receipt_unseen",
 	"resource_state_digest",
 	"timing_self_consistent",
 	"timing_within_bound",
@@ -315,24 +314,23 @@ var NotPerformedCapableChecks = []string{
 	"agent_identity_binding",
 	"enforcement_point_binding",
 	"policy_digest",
-	"replay_nonce_unseen",
-	"commitment_session_unseen",
+	"replay_receipt_unseen",
 	"resource_state_digest",
 }
 
-// memorySeenSet is the runner's verifier-side replay store. Vectors select
-// whether one is supplied and whether it already holds the artifact, because
-// freshness is the one property the artifact files cannot express.
+// memorySeenSet is the runner's record of receipts already acted upon. Vectors
+// select whether one is supplied and whether it already holds this receipt,
+// because freshness is the one property the artifact files cannot express.
 type memorySeenSet struct{ seen map[string]bool }
 
 func newSeenSet() *memorySeenSet { return &memorySeenSet{seen: map[string]bool{}} }
 
-func (m *memorySeenSet) Seen(kind string, id []byte) bool {
-	return m.seen[kind+"/"+string(id)]
+func (m *memorySeenSet) Seen(receiptDigest []byte) bool {
+	return m.seen[string(receiptDigest)]
 }
 
-func (m *memorySeenSet) Record(kind string, id []byte) {
-	m.seen[kind+"/"+string(id)] = true
+func (m *memorySeenSet) record(receiptDigest []byte) {
+	m.seen[string(receiptDigest)] = true
 }
 
 // Coverage records, for each check the verifier emits, which outcomes some
@@ -641,38 +639,25 @@ func DerivationCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (map[s
 	return reached, nil
 }
 
-// preloadSeen fills a seen-set with the replay identifiers the vector's own
-// artifacts carry, so the verifier meets them as already-accepted.
+// preloadSeen marks the vector's own receipt as already acted upon, so the
+// verifier meets it as a replay.
 func preloadSeen(set *memorySeenSet, v vectors.Vector) error {
-	if v.MATFile != "" {
-		env, err := loadHex(v.MATFile)
-		if err != nil {
-			return err
-		}
-		payload, err := xap.UnverifiedPayload(env)
-		if err != nil {
-			return err
-		}
-		m, err := xap.UnmarshalMAT(payload)
-		if err != nil {
-			return err
-		}
-		set.Record(xap.ReplayKindMATNonce, m.Replay.Nonce)
+	env, err := loadHex(v.ReceiptFile)
+	if err != nil {
+		return err
 	}
-	if v.CommitmentFile != "" {
-		env, err := loadHex(v.CommitmentFile)
-		if err != nil {
-			return err
-		}
-		payload, err := xap.UnverifiedPayload(env)
-		if err != nil {
-			return err
-		}
-		c, err := xap.UnmarshalCommitment(payload)
-		if err != nil {
-			return err
-		}
-		set.Record(xap.ReplayKindCommitmentSession, []byte(c.SessionID))
+	payload, err := xap.UnverifiedPayload(env)
+	if err != nil {
+		return err
 	}
+	r, err := xap.UnmarshalReceipt(payload)
+	if err != nil {
+		return err
+	}
+	d, err := r.Digest()
+	if err != nil {
+		return err
+	}
+	set.record(d)
 	return nil
 }

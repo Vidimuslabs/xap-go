@@ -113,6 +113,23 @@ func (m *MAT) ValidateStructure() error {
 	// removal, and the corpus already treats them as equal everywhere, so
 	// requiring equality codifies existing practice rather than inventing a
 	// rule.
+	// Constraint ids are how outcomes are matched to constraints at verification
+	// and how parent and child constraints are paired during delegation. A MAT
+	// carrying two constraints under one id collapses in both lookups — the
+	// surviving entry is whichever was written last — so an outcome recorded for
+	// that id marks BOTH as covered while only one was ever evaluated. Ordering
+	// then decides which constraint is enforced and which is invisible, and the
+	// issuer chooses the ordering.
+	seen := make(map[string]bool, len(m.Constraints))
+	for _, c := range m.Constraints {
+		if c.ID == "" {
+			return fmt.Errorf("MAT %s carries a constraint with no id", m.ID)
+		}
+		if seen[c.ID] {
+			return fmt.Errorf("MAT %s carries more than one constraint with id %q", m.ID, c.ID)
+		}
+		seen[c.ID] = true
+	}
 	if m.Replay.InstanceID != m.ID {
 		return fmt.Errorf("MAT %s declares instance id %q; the artifact instance identifier and the replay instance id are the same value",
 			m.ID, m.Replay.InstanceID)

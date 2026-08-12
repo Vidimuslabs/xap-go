@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	xap "github.com/Vidimuslabs/xap-go"
+	"github.com/Vidimuslabs/xap-go/canonical"
 )
 
 // decisionFixture builds a MAT with two constraints and a context violating
@@ -579,3 +580,164 @@ func TestMATMustCarryReplayProtection(t *testing.T) {
 		t.Error("a MAT with no instance id was accepted")
 	}
 }
+
+// noReplayRecord is a query-only record of receipts already acted upon.
+type acceptedReceipts struct{ seen map[string]bool }
+
+func newAccepted() *acceptedReceipts           { return &acceptedReceipts{seen: map[string]bool{}} }
+func (a *acceptedReceipts) Seen(d []byte) bool { return a.seen[string(d)] }
+func (a *acceptedReceipts) accept(d []byte)    { a.seen[string(d)] = true }
+
+// Replay is per-RECEIPT and the guard is query-only. The first version of this
+// API got both wrong, and each mistake broke ordinary use rather than an attack:
+//
+//   - keyed on the MAT's replay nonce, which identifies the ARTIFACT. One MAT
+//     authorizes many operations, so every receipt after the first under the
+//     same MAT was reported as a replay — walking an append-only log, the
+//     ordinary auditing case, failed from the second entry onward.
+//   - Verify recorded what it saw, making verification a mutation, so looking
+//     at the same receipt twice reported the second look as a replay.
+func TestReplayIsPerReceiptAndVerificationDoesNotMutate(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("replay-key")
+	anchors := xap.NewTrustAnchorSet()
+	roles := []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}
+	if err := anchors.AddHybrid(kid, roles, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(b []byte) []byte { return signHybrid(t, kid, ec, mlPriv, b) }
+
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-replay", Issuer: xap.IssuerIdentity{ID: "i", KID: kid},
+		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
+		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "mat-replay"},
+	}
+	mp, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv := sign(mp)
+
+	build := func(id string) (xap.Receipt, []byte) {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: id, ArtifactID: "mat-replay",
+			Decision: "permit", ContextDigest: []byte{1},
+			Timing: xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z"},
+		}
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rc, sign(p)
+	}
+
+	guard := newAccepted()
+	v := xap.NewVerifier(anchors)
+	rc1, env1 := build("r1")
+	_, env2 := build("r2")
+
+	if res := v.Verify(xap.VerifyInput{ReceiptEnvelope: env1, MATEnvelope: matEnv, Replay: guard}); !res.Valid {
+		t.Fatalf("first receipt rejected: %v", res.Failed())
+	}
+	// A second receipt under the SAME MAT is ordinary use, not a replay.
+	if res := v.Verify(xap.VerifyInput{ReceiptEnvelope: env2, MATEnvelope: matEnv, Replay: guard}); !res.Valid {
+		t.Errorf("a second receipt under the same MAT was reported as a replay: %v", res.Failed())
+	}
+	// Looking at the same receipt twice is a query, not an acceptance.
+	if res := v.Verify(xap.VerifyInput{ReceiptEnvelope: env1, MATEnvelope: matEnv, Replay: guard}); !res.Valid {
+		t.Errorf("re-verifying one receipt was reported as a replay: %v", res.Failed())
+	}
+
+	// Once the relying party records having ACTED on it, presenting it again is.
+	d, err := rc1.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard.accept(d)
+	res := v.Verify(xap.VerifyInput{ReceiptEnvelope: env1, MATEnvelope: matEnv, Replay: guard})
+	if res.Valid {
+		t.Fatal("a receipt already acted upon verified again")
+	}
+	if c := checkNamed(t, res, "replay_receipt_unseen"); c.Status != xap.CheckFailed {
+		t.Fatalf("replay_receipt_unseen = %q, want failed", c.Status)
+	}
+}
+
+// Constraint ids are how outcomes are matched to constraints and how delegation
+// pairs parent with child. Two constraints under one id collapse in both
+// lookups — last write wins — so an outcome recorded for that id marked BOTH as
+// covered while only one was evaluated, and the ISSUER chose the ordering that
+// decided which one became invisible.
+func TestDuplicateConstraintIDsAreRejected(t *testing.T) {
+	base := func() xap.MAT {
+		return xap.MAT{
+			Version: xap.ProtocolVersion, ID: "m", Issuer: xap.IssuerIdentity{ID: "i", KID: []byte("k")},
+			Replay: xap.ReplayProtection{
+				NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z",
+				Nonce: []byte("n"), InstanceID: "m",
+			},
+		}
+	}
+	dup := base()
+	dup.Constraints = []xap.Constraint{
+		{ID: "c", Type: "resource_state", Key: "db", Equals: "healthy"},
+		{ID: "c", Type: "network_zone", Zones: []string{"trusted"}},
+	}
+	if err := dup.ValidateStructure(); err == nil {
+		t.Error("a MAT carrying two constraints under one id was accepted")
+	}
+	unnamed := base()
+	unnamed.Constraints = []xap.Constraint{{Type: "network_zone", Zones: []string{"trusted"}}}
+	if err := unnamed.ValidateStructure(); err == nil {
+		t.Error("a MAT carrying a constraint with no id was accepted")
+	}
+	ok := base()
+	ok.Constraints = []xap.Constraint{
+		{ID: "c1", Type: "network_zone", Zones: []string{"trusted"}},
+		{ID: "c2", Type: "resource_state", Key: "db", Equals: "healthy"},
+	}
+	if err := ok.ValidateStructure(); err != nil {
+		t.Fatalf("distinctly-identified constraints were rejected: %v", err)
+	}
+}
+
+// A resource key the reproduced context does not carry cannot be reproduced.
+// Skipping it quietly recomputed the digest over a SMALLER set than the receipt
+// names, reporting pass or fail on a set neither side agreed to.
+func TestUnreproducibleResourceKeyIsNotPerformed(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("rs-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	ctx := xap.RuntimeContext{Time: "2026-06-01T00:00:00Z", ResourceState: map[string]string{"db": "healthy"}}
+	cd, err := ctx.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial, err := canonicalDigestOf(map[string]string{"db": "healthy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := xap.Receipt{
+		Version: xap.ProtocolVersion, ID: "r", ArtifactID: "m",
+		Decision: "permit", ContextDigest: cd,
+		ResourceKeys:        []string{"db", "queue"}, // "queue" is not reproduced
+		ResourceStateDigest: partial,
+		Timing:              xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z"},
+	}
+	p, err := rc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{
+		ReceiptEnvelope: signHybrid(t, kid, ec, mlPriv, p), ReproducedContext: &ctx,
+	})
+	c := checkNamed(t, res, "resource_state_digest")
+	if c.Status != xap.CheckNotPerformed {
+		t.Fatalf("status = %q, want not_performed; detail=%q", c.Status, c.Detail)
+	}
+}
+
+func canonicalDigestOf(v any) ([]byte, error) { return canonical.DigestBytes(v) }

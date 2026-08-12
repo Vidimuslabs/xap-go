@@ -162,3 +162,103 @@ func TestAnchorMustNameARole(t *testing.T) {
 		t.Fatalf("anchor set has %d entries after refused registrations", s.Len())
 	}
 }
+
+// Nothing in a COSE_Sign1 envelope states which KIND of artifact its payload
+// is. There is no `typ` in the protected header, and verifyEnvelope is shared
+// by all three parsers, so the only thing standing between a MAT envelope and
+// ParseReceipt is that the strict decoder rejects fields the target struct does
+// not declare.
+//
+// That defence holds, and it holds by consequence of a decoder option rather
+// than by intent — which is exactly the kind of property that survives until
+// someone relaxes ExtraDecErrorUnknownField for an unrelated reason. Pinned
+// here so that change fails a test instead of opening a substitution.
+func TestArtifactKindsAreNotInterchangeable(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("kid-all-roles")
+	anchors := xap.NewTrustAnchorSet()
+	all := []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint, xap.RoleAgent}
+	if err := anchors.AddHybrid(kid, all, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(payload []byte) []byte { return signHybrid(t, kid, ec, mlPriv, payload) }
+
+	mat := issuerMAT("mat-kind", "issuer", kid)
+	matPayload, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := xap.Receipt{
+		Version: xap.ProtocolVersion, ID: "r-kind", ArtifactID: "mat-kind",
+		Decision: "permit", ContextDigest: []byte{1},
+		Timing: xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:00Z"},
+	}
+	rcPayload, err := rc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := xap.CommitmentObject{
+		Version: xap.ProtocolVersion, ID: "c-kind",
+		AgentIdentity:    xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1}},
+		SessionID:        "s",
+		DeclaredActions:  xap.DeclaredActionSet{ActionTypes: []string{"read"}},
+		TemporalValidity: xap.TemporalValidity{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z"},
+		Binding:          xap.CommitmentBinding{ArtifactID: "mat-kind", ConstraintDigest: []byte{2}},
+	}
+	cmPayload, err := cm.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Every parser must reject both artifact kinds that are not its own, even
+	// though all three envelopes carry a valid signature by a trusted key that
+	// is registered for all three roles.
+	for _, tc := range []struct {
+		name    string
+		payload []byte
+		parse   func([]byte, *xap.TrustAnchorSet) error
+	}{
+		{"MAT as receipt", matPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseReceipt(e, a)
+			return err
+		}},
+		{"MAT as commitment", matPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseCommitment(e, a)
+			return err
+		}},
+		{"receipt as MAT", rcPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseMAT(e, a)
+			return err
+		}},
+		{"receipt as commitment", rcPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseCommitment(e, a)
+			return err
+		}},
+		{"commitment as MAT", cmPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseMAT(e, a)
+			return err
+		}},
+		{"commitment as receipt", cmPayload, func(e []byte, a *xap.TrustAnchorSet) error {
+			_, err := xap.ParseReceipt(e, a)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.parse(sign(tc.payload), anchors); err == nil {
+				t.Fatal("one artifact kind parsed as another")
+			}
+		})
+	}
+
+	// Controls: each parser accepts its own kind, or the six cases above pass
+	// for the wrong reason.
+	if _, err := xap.ParseMAT(sign(matPayload), anchors); err != nil {
+		t.Fatalf("ParseMAT rejected a MAT: %v", err)
+	}
+	if _, err := xap.ParseReceipt(sign(rcPayload), anchors); err != nil {
+		t.Fatalf("ParseReceipt rejected a receipt: %v", err)
+	}
+	if _, err := xap.ParseCommitment(sign(cmPayload), anchors); err != nil {
+		t.Fatalf("ParseCommitment rejected a commitment: %v", err)
+	}
+}

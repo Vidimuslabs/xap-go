@@ -39,10 +39,11 @@ func TestEveryVerifierCheckIsPinnedByAVector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build anchors: %v", err)
 	}
-	emitted, failed, notPerformed, err := CheckCoverage(anchors, m)
+	cov, err := CheckCoverage(anchors, m)
 	if err != nil {
 		t.Fatalf("check coverage: %v", err)
 	}
+	emitted, failed, notPerformed := cov.Emitted, cov.Failed, cov.NotPerformed
 
 	declared := make(map[string]bool, len(VerifierChecks))
 	for _, c := range VerifierChecks {
@@ -59,6 +60,26 @@ func TestEveryVerifierCheckIsPinnedByAVector(t *testing.T) {
 	for _, c := range unpinned {
 		t.Errorf("check %q is never driven to failure by any vector: an implementation "+
 			"that omits it reproduces every expected outcome", c)
+	}
+
+	// The mirror image, and the one the corpus was missing. A vector expecting
+	// "invalid" cannot say WHICH check made it invalid, so a check no vector
+	// ever drives to PASS is satisfied by an implementation that hard-codes it
+	// to failed. That is how redefining the chain link in 2026-08-12 went
+	// unnoticed at 82/82: receipt_broken_chain pinned the failure and nothing
+	// pinned the success.
+	var neverPassed []string
+	for _, c := range VerifierChecks {
+		if !cov.Passed[c] {
+			neverPassed = append(neverPassed, c)
+		}
+	}
+	sort.Strings(neverPassed)
+	for _, c := range neverPassed {
+		t.Errorf("check %q is never driven to PASS by any vector: an implementation "+
+			"that reports it as failed unconditionally reproduces every expected "+
+			"outcome, because a vector expecting \"invalid\" does not say which "+
+			"check failed", c)
 	}
 
 	// A check that reports not-performed must say so in the declared list, or

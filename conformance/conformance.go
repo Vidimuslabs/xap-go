@@ -308,32 +308,59 @@ var NotPerformedCapableChecks = []string{
 	"timing_self_consistent",
 }
 
-// CheckCoverage runs every receipt vector through the verifier and reports
-// which checks were emitted at all, which were driven to a failure by some
-// vector, and which ever reported not-performed. A check that is only ever
-// observed passing is a check no vector defends: an implementation omitting it
-// reproduces every expected outcome.
-func CheckCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (emitted, failed, notPerformed map[string]bool, err error) {
-	emitted, failed, notPerformed = map[string]bool{}, map[string]bool{}, map[string]bool{}
+// Coverage records, for each check the verifier emits, which outcomes some
+// vector actually drove it to.
+//
+// Both directions matter and for different reasons. A check no vector drives to
+// FAILURE is a check an implementation may simply not perform while reproducing
+// every expected outcome — measured before this gate existed, a verifier with
+// nine checks removed passed 37/37. A check no vector drives to PASS is the
+// mirror image: an implementation that hard-codes it to failed also reproduces
+// every expected outcome, because a vector expecting "invalid" cannot tell which
+// check made it invalid. That is not hypothetical either. When the chain link
+// was redefined in 2026-08-12, the corpus carried only receipt_broken_chain and
+// the change went unnoticed at 82/82.
+//
+// A suite certifies a check only when it pins both answers.
+type Coverage struct {
+	// Emitted is every check name the verifier produced for some vector.
+	Emitted map[string]bool
+	// Passed, Failed and NotPerformed record which statuses were observed.
+	Passed       map[string]bool
+	Failed       map[string]bool
+	NotPerformed map[string]bool
+}
+
+// CheckCoverage runs every receipt vector through the verifier and records which
+// outcomes each check was driven to.
+func CheckCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (Coverage, error) {
+	cov := Coverage{
+		Emitted:      map[string]bool{},
+		Passed:       map[string]bool{},
+		Failed:       map[string]bool{},
+		NotPerformed: map[string]bool{},
+	}
 	for _, v := range m.Vectors {
 		if v.Kind != "receipt" || v.ReceiptFile == "" {
 			continue
 		}
 		in, err := buildVerifyInput(v, anchors)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("vector %q: %w", v.Name, err)
+			return Coverage{}, fmt.Errorf("vector %q: %w", v.Name, err)
 		}
 		for _, c := range xap.NewVerifier(anchors).Verify(in).Checks {
-			emitted[c.Name] = true
+			cov.Emitted[c.Name] = true
 			switch c.Status {
+			case xap.CheckPassed:
+				cov.Passed[c.Name] = true
 			case xap.CheckFailed:
-				failed[c.Name] = true
+				cov.Failed[c.Name] = true
 			case xap.CheckNotPerformed:
-				notPerformed[c.Name] = true
+				cov.NotPerformed[c.Name] = true
 			}
 		}
 	}
-	return emitted, failed, notPerformed, nil
+	return cov, nil
 }
 
 // buildVerifyInput assembles the optional inputs a receipt vector supplies.

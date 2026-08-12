@@ -9,7 +9,7 @@ go 1.26.5
 replace github.com/Vidimuslabs/xap-spec => ../xap-spec
 
 require (
-	github.com/Vidimuslabs/xap-spec v0.1.0
+	github.com/Vidimuslabs/xap-spec v0.2.0-rc.1
 	github.com/cloudflare/circl v1.6.4
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/veraison/go-cose v1.3.0

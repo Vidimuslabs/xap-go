@@ -88,6 +88,19 @@ func (m *MAT) ValidateStructure() error {
 	if m.Replay.NotBefore == "" || m.Replay.NotAfter == "" {
 		return fmt.Errorf("MAT missing validity interval")
 	}
+	// Field 138 is replay protection: validity interval, nonce AND instance id
+	// (¶0041). Presence is the only property of a nonce a stateless verifier can
+	// establish — whether it has been seen before needs state the verifier
+	// deliberately does not have (¶0017) — but it is the property whose absence
+	// means there is no replay protection at all, rather than replay protection
+	// this verifier cannot evaluate. Those are different claims and only the
+	// second is a limitation.
+	if len(m.Replay.Nonce) == 0 {
+		return fmt.Errorf("MAT %s carries no replay nonce", m.ID)
+	}
+	if m.Replay.InstanceID == "" {
+		return fmt.Errorf("MAT %s carries no instance id", m.ID)
+	}
 	if _, err := time.Parse(time.RFC3339, m.Replay.NotBefore); err != nil {
 		return fmt.Errorf("MAT not_before: %w", err)
 	}

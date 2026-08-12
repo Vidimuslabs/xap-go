@@ -19,6 +19,7 @@ func issuerMAT(id, issuerID string, kid []byte) xap.MAT {
 		Replay: xap.ReplayProtection{
 			NotBefore:  "2026-01-01T00:00:00Z",
 			NotAfter:   "2030-01-01T00:00:00Z",
+			Nonce:      []byte("n"),
 			InstanceID: "inst-1",
 		},
 	}

@@ -16,7 +16,7 @@ func govMAT() MAT {
 			{ID: "c-zone", Type: "network_zone", Zones: []string{"prod"}},
 			{ID: "c-rate", Type: "rate_limit", MaxRate: ptrI64(100)},
 		},
-		Replay: ReplayProtection{NotBefore: "2026-06-30T00:00:00Z", NotAfter: "2026-07-08T00:00:00Z"},
+		Replay: ReplayProtection{NotBefore: "2026-06-30T00:00:00Z", NotAfter: "2026-07-08T00:00:00Z", Nonce: []byte("n"), InstanceID: "gov"},
 		Issuer: IssuerIdentity{ID: "issuer"},
 	}
 }

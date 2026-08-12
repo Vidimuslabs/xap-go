@@ -282,6 +282,7 @@ var VerifierChecks = []string{
 	"chain_link",
 	"commitment_signature",
 	"commitment_binding",
+	"agent_identity_binding",
 	"commitment_scope",
 	"compliance_commitment_check",
 	"compliance_scope_check",
@@ -306,6 +307,7 @@ var NotPerformedCapableChecks = []string{
 	"commitment_temporal",
 	"commitment_action_window",
 	"timing_self_consistent",
+	"agent_identity_binding",
 }
 
 // Coverage records, for each check the verifier emits, which outcomes some

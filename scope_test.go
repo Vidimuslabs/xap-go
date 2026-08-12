@@ -50,7 +50,7 @@ func scopeFixture(t *testing.T) (mat []byte, anchors *xap.TrustAnchorSet, sign f
 	matEnv := signES256(t, kid, priv, mp)
 
 	set := xap.NewTrustAnchorSet()
-	if err := set.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+	if err := set.AddECDSAP256(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}, &priv.PublicKey); err != nil {
 		t.Fatal(err)
 	}
 

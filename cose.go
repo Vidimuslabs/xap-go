@@ -23,13 +23,69 @@ import (
 // server. A verifier here selects a trust anchor by the envelope's key
 // identifier and validates the signature over the enclosed payload.
 
-// TrustAnchor is a single verification key with its signature algorithm and key
-// identifier (FIG. 14, ¶0066). The KID matches the COSE protected-header key id
-// set by the signer.
+// SignerRole names an artifact kind a key is trusted to sign. The protocol has
+// three distinct signing roles and they are not interchangeable: an issuer
+// grants authority (MAT, ¶0041 field 136), an enforcement point attests to a
+// decision it made under that authority (receipt, ¶0050), and an agent commits
+// in advance to what it will propose (commitment object, ¶0095B).
+//
+// The anchor set used to be a flat map from key id to key, consulted
+// identically by all three parsers, so any trusted key could sign any artifact
+// kind — an agent's key could mint the very authority grant the agent operates
+// under. Nothing in a raw public key says what it is for, so the role has to be
+// recorded when the operator registers it.
+type SignerRole string
+
+const (
+	// RoleIssuer may sign Machine Authority Tokens.
+	RoleIssuer SignerRole = "issuer"
+	// RoleEnforcementPoint may sign execution receipts.
+	RoleEnforcementPoint SignerRole = "enforcement_point"
+	// RoleAgent may sign commitment objects.
+	RoleAgent SignerRole = "agent"
+)
+
+// TrustAnchor is a single verification key with its signature algorithm, key
+// identifier, and the roles it is trusted for (FIG. 14, ¶0066). The KID matches
+// the COSE protected-header key id set by the signer.
 type TrustAnchor struct {
 	KID       []byte
 	Algorithm constants.SignatureAlg
 	PublicKey crypto.PublicKey
+	// Roles are the artifact kinds this key may sign. An anchor with no roles
+	// may sign nothing: registration requires the operator to say what the key
+	// is for, because the alternative default — "anything" — is the most
+	// permissive grant available and would arise from saying nothing.
+	Roles []SignerRole
+}
+
+// Permits reports whether this anchor is trusted to sign the given artifact kind.
+func (a TrustAnchor) Permits(role SignerRole) bool {
+	for _, r := range a.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrAnchorRoleMismatch reports that an envelope verified against a key the
+// operator did not register for that artifact kind.
+var ErrAnchorRoleMismatch = errors.New("xap: trust anchor is not registered for this artifact kind")
+
+// validRoles checks that a registration names at least one role and no unknown one.
+func validRoles(roles []SignerRole) error {
+	if len(roles) == 0 {
+		return errNoRoles
+	}
+	for _, r := range roles {
+		switch r {
+		case RoleIssuer, RoleEnforcementPoint, RoleAgent:
+		default:
+			return fmt.Errorf("%w: %q", errUnknownRole, r)
+		}
+	}
+	return nil
 }
 
 // TrustAnchorSet is the configured set of trust anchors distributed to a
@@ -61,17 +117,23 @@ func NewTrustAnchorSet() *TrustAnchorSet {
 var ErrNoTrustAnchor = errors.New("xap: no trust anchor for key id")
 
 var (
-	errNoKID      = errors.New("xap: trust anchor key id must not be empty")
-	errNilKey     = errors.New("xap: trust anchor public key must not be nil")
-	errKeyLen     = errors.New("xap: ed25519 trust anchor key must be 32 bytes")
-	errWrongCurve = errors.New("xap: trust anchor key is on the wrong curve")
+	errNoKID       = errors.New("xap: trust anchor key id must not be empty")
+	errNilKey      = errors.New("xap: trust anchor public key must not be nil")
+	errKeyLen      = errors.New("xap: ed25519 trust anchor key must be 32 bytes")
+	errWrongCurve  = errors.New("xap: trust anchor key is on the wrong curve")
+	errNoRoles     = errors.New("xap: trust anchor must name at least one signer role")
+	errUnknownRole = errors.New("xap: unknown signer role")
 )
 
-// AddEd25519 registers an Ed25519 verification key under the given key id. It
-// returns an error if kid is empty or pub is not ed25519.PublicKeySize bytes.
-func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) error {
+// AddEd25519 registers an Ed25519 verification key under the given key id, for
+// the given signer roles. It returns an error if kid is empty, roles is empty or
+// names an unknown role, or pub is not ed25519.PublicKeySize bytes.
+func (s *TrustAnchorSet) AddEd25519(kid []byte, roles []SignerRole, pub ed25519.PublicKey) error {
 	if len(kid) == 0 {
 		return errNoKID
+	}
+	if err := validRoles(roles); err != nil {
+		return err
 	}
 	if len(pub) != ed25519.PublicKeySize {
 		return fmt.Errorf("%w: got %d", errKeyLen, len(pub))
@@ -80,6 +142,7 @@ func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) error {
 		KID:       kid,
 		Algorithm: constants.SigEd25519,
 		PublicKey: pub,
+		Roles:     append([]SignerRole(nil), roles...),
 	}
 	return nil
 }
@@ -89,9 +152,12 @@ func (s *TrustAnchorSet) AddEd25519(kid []byte, pub ed25519.PublicKey) error {
 // (¶0066): the same verification path admits a second signature algorithm
 // selected per key, so an HSM-backed ECDSA issuer verifies identically. It
 // returns an error if kid is empty, pub is nil, or pub is not on P-256.
-func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) error {
+func (s *TrustAnchorSet) AddECDSAP256(kid []byte, roles []SignerRole, pub *ecdsa.PublicKey) error {
 	if len(kid) == 0 {
 		return errNoKID
+	}
+	if err := validRoles(roles); err != nil {
+		return err
 	}
 	if pub == nil || pub.Curve == nil {
 		return errNilKey
@@ -117,6 +183,7 @@ func (s *TrustAnchorSet) AddECDSAP256(kid []byte, pub *ecdsa.PublicKey) error {
 		KID:       kid,
 		Algorithm: constants.SigECDSAP256,
 		PublicKey: pub,
+		Roles:     append([]SignerRole(nil), roles...),
 	}
 	return nil
 }
@@ -137,9 +204,12 @@ type HybridPublicKey struct {
 // It returns an error if kid is empty, either half is nil, or the classical
 // half is not on P-384. A nil half would defeat both-must-pass by panicking
 // rather than denying.
-func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.PublicKey) error {
+func (s *TrustAnchorSet) AddHybrid(kid []byte, roles []SignerRole, ec *ecdsa.PublicKey, ml *mldsa65.PublicKey) error {
 	if len(kid) == 0 {
 		return errNoKID
+	}
+	if err := validRoles(roles); err != nil {
+		return err
 	}
 	if ec == nil || ec.Curve == nil || ml == nil {
 		return errNilKey
@@ -158,6 +228,7 @@ func (s *TrustAnchorSet) AddHybrid(kid []byte, ec *ecdsa.PublicKey, ml *mldsa65.
 		KID:       kid,
 		Algorithm: constants.SigHybridECDSAP384MLDSA65,
 		PublicKey: &HybridPublicKey{ECDSA: ec, MLDSA: ml},
+		Roles:     append([]SignerRole(nil), roles...),
 	}
 	return nil
 }
@@ -244,7 +315,7 @@ func (v hybridCOSEVerifier) Verify(content, signature []byte) error {
 // payload. It is the common signature-verification primitive for MATs,
 // receipts, and commitment objects. Signature failure returns an error, which
 // callers translate into an unconditional-denial path (¶0045, ¶0095A).
-func verifyEnvelope(envelope []byte, anchors *TrustAnchorSet) (payload []byte, kid []byte, err error) {
+func verifyEnvelope(envelope []byte, anchors *TrustAnchorSet, role SignerRole) (payload []byte, kid []byte, err error) {
 	var msg cose.Sign1Message
 	if err := msg.UnmarshalCBOR(envelope); err != nil {
 		return nil, nil, fmt.Errorf("decode COSE_Sign1: %w", err)
@@ -260,6 +331,13 @@ func verifyEnvelope(envelope []byte, anchors *TrustAnchorSet) (payload []byte, k
 	anchor, ok := anchors.Get(kid)
 	if !ok {
 		return nil, nil, fmt.Errorf("%w: key id %x", ErrNoTrustAnchor, kid)
+	}
+	// Checked before the signature, not after: a key registered only to sign
+	// receipts is not trusted to grant authority, and whether its signature is
+	// arithmetically valid does not change that.
+	if !anchor.Permits(role) {
+		return nil, nil, fmt.Errorf("%w: key id %x is registered for %v, not %q",
+			ErrAnchorRoleMismatch, kid, anchor.Roles, role)
 	}
 	verifier, err := coseVerifierFor(anchor)
 	if err != nil {
@@ -292,7 +370,7 @@ var ErrIssuerKeyMismatch = errors.New("xap: MAT issuer key id does not match the
 // alternative reading — absence excuses the check — is the same "absence is not
 // a statement" defect ExecutionScope.Unconstrained exists to prevent.
 func ParseMAT(envelope []byte, anchors *TrustAnchorSet) (*SignedMAT, error) {
-	payload, kid, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors, RoleIssuer)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +394,7 @@ func ParseMAT(envelope []byte, anchors *TrustAnchorSet) (*SignedMAT, error) {
 // ParseReceipt decodes and signature-verifies a COSE_Sign1 receipt envelope
 // against the trust anchor set (enforcement point signature, ¶0050).
 func ParseReceipt(envelope []byte, anchors *TrustAnchorSet) (*SignedReceipt, error) {
-	payload, kid, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors, RoleEnforcementPoint)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +409,7 @@ func ParseReceipt(envelope []byte, anchors *TrustAnchorSet) (*SignedReceipt, err
 // envelope against the agent's key in the anchor set. Signature failure maps to
 // COMMITMENT_OBJECT_SIGNATURE_FAILURE (¶0095A).
 func ParseCommitment(envelope []byte, anchors *TrustAnchorSet) (*SignedCommitment, error) {
-	payload, kid, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors, RoleAgent)
 	if err != nil {
 		return nil, err
 	}

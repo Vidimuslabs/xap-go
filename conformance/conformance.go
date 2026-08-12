@@ -30,10 +30,18 @@ type Result struct {
 	Detail string
 }
 
-// BuildAnchors constructs a trust anchor set from the manifest's anchors.
+// BuildAnchors constructs a trust anchor set from the manifest's anchors,
+// including the roles each key is registered for. A manifest anchor that names
+// no role is an error rather than a key trusted for everything: the corpus has
+// to configure a verifier the way an operator would, and "unstated means
+// unrestricted" is the reading the role separation exists to remove.
 func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 	set := xap.NewTrustAnchorSet()
 	for _, a := range m.Anchors {
+		roles, err := rolesOf(a)
+		if err != nil {
+			return nil, err
+		}
 		kid, err := hex.DecodeString(a.KIDHex)
 		if err != nil {
 			return nil, fmt.Errorf("anchor kid %q: %w", a.KIDHex, err)
@@ -44,7 +52,7 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 		}
 		switch a.Alg {
 		case string(constants.SigEd25519):
-			if err := set.AddEd25519(kid, pub); err != nil {
+			if err := set.AddEd25519(kid, roles, pub); err != nil {
 				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
 			}
 		case string(constants.SigHybridECDSAP384MLDSA65):
@@ -52,7 +60,7 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 			if err != nil {
 				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
 			}
-			if err := set.AddHybrid(kid, ec, ml); err != nil {
+			if err := set.AddHybrid(kid, roles, ec, ml); err != nil {
 				return nil, fmt.Errorf("anchor %q: %w", a.KIDHex, err)
 			}
 		default:
@@ -60,6 +68,23 @@ func BuildAnchors(m *vectors.Manifest) (*xap.TrustAnchorSet, error) {
 		}
 	}
 	return set, nil
+}
+
+// rolesOf maps a manifest anchor's declared roles onto the SDK's role type.
+func rolesOf(a vectors.Anchor) ([]xap.SignerRole, error) {
+	if len(a.Roles) == 0 {
+		return nil, fmt.Errorf("anchor %q declares no signer roles", a.KIDHex)
+	}
+	out := make([]xap.SignerRole, 0, len(a.Roles))
+	for _, r := range a.Roles {
+		switch xap.SignerRole(r) {
+		case xap.RoleIssuer, xap.RoleEnforcementPoint, xap.RoleAgent:
+			out = append(out, xap.SignerRole(r))
+		default:
+			return nil, fmt.Errorf("anchor %q: unknown signer role %q", a.KIDHex, r)
+		}
+	}
+	return out, nil
 }
 
 // parseHybridPub decodes a hybrid anchor's two public keys: the ECDSA P-384 key

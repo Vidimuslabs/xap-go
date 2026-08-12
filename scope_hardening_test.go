@@ -414,7 +414,7 @@ func TestComplianceBooleansAreRecomputed(t *testing.T) {
 	}
 	kid := []byte("cmp-issuer")
 	anchors := xap.NewTrustAnchorSet()
-	if err := anchors.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+	if err := anchors.AddECDSAP256(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint, xap.RoleAgent}, &priv.PublicKey); err != nil {
 		t.Fatal(err)
 	}
 
@@ -521,7 +521,7 @@ func TestReceiptProvenanceMustAgreeWithItsCommitment(t *testing.T) {
 	}
 	kid := []byte("prov-issuer")
 	anchors := xap.NewTrustAnchorSet()
-	if err := anchors.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+	if err := anchors.AddECDSAP256(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint, xap.RoleAgent}, &priv.PublicKey); err != nil {
 		t.Fatal(err)
 	}
 	mat := xap.MAT{

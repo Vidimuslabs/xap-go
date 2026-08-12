@@ -39,7 +39,7 @@ func TestAddEd25519RejectsMalformedKey(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewTrustAnchorSet()
-			if err := s.AddEd25519(tc.kid, make([]byte, tc.n)); err == nil {
+			if err := s.AddEd25519(tc.kid, []SignerRole{RoleIssuer}, make([]byte, tc.n)); err == nil {
 				t.Fatalf("registered a %d-byte ed25519 key", tc.n)
 			}
 			if s.Len() != 0 {
@@ -49,10 +49,10 @@ func TestAddEd25519RejectsMalformedKey(t *testing.T) {
 	}
 
 	s := NewTrustAnchorSet()
-	if err := s.AddEd25519(nil, make([]byte, ed25519.PublicKeySize)); err == nil {
+	if err := s.AddEd25519(nil, []SignerRole{RoleIssuer}, make([]byte, ed25519.PublicKeySize)); err == nil {
 		t.Fatal("registered an anchor under an empty key id")
 	}
-	if err := s.AddEd25519([]byte("k"), make([]byte, ed25519.PublicKeySize)); err != nil {
+	if err := s.AddEd25519([]byte("k"), []SignerRole{RoleIssuer}, make([]byte, ed25519.PublicKeySize)); err != nil {
 		t.Fatalf("rejected a well-formed anchor: %v", err)
 	}
 }
@@ -68,19 +68,19 @@ func TestAddECDSAP256RejectsMalformedKey(t *testing.T) {
 	}
 
 	s := NewTrustAnchorSet()
-	if err := s.AddECDSAP256([]byte("k"), nil); err == nil {
+	if err := s.AddECDSAP256([]byte("k"), []SignerRole{RoleIssuer}, nil); err == nil {
 		t.Fatal("registered a nil ECDSA key")
 	}
-	if err := s.AddECDSAP256([]byte("k"), &ecdsa.PublicKey{Curve: elliptic.P256()}); err == nil {
+	if err := s.AddECDSAP256([]byte("k"), []SignerRole{RoleIssuer}, &ecdsa.PublicKey{Curve: elliptic.P256()}); err == nil {
 		t.Fatal("registered an ECDSA key with nil coordinates")
 	}
-	if err := s.AddECDSAP256([]byte("k"), &p384.PublicKey); err == nil {
+	if err := s.AddECDSAP256([]byte("k"), []SignerRole{RoleIssuer}, &p384.PublicKey); err == nil {
 		t.Fatal("registered a P-384 key as P-256")
 	}
 	if s.Len() != 0 {
 		t.Fatal("a rejected key was still stored")
 	}
-	if err := s.AddECDSAP256([]byte("k"), &p256.PublicKey); err != nil {
+	if err := s.AddECDSAP256([]byte("k"), []SignerRole{RoleIssuer}, &p256.PublicKey); err != nil {
 		t.Fatalf("rejected a well-formed P-256 anchor: %v", err)
 	}
 }
@@ -102,19 +102,19 @@ func TestAddHybridRejectsMalformedKey(t *testing.T) {
 	s := NewTrustAnchorSet()
 	// A nil half must be refused outright: both-must-pass is meaningless if one
 	// half cannot be evaluated, and a nil key crashes rather than denies.
-	if err := s.AddHybrid([]byte("k"), nil, mlPub); err == nil {
+	if err := s.AddHybrid([]byte("k"), []SignerRole{RoleIssuer}, nil, mlPub); err == nil {
 		t.Fatal("registered a hybrid anchor with a nil classical half")
 	}
-	if err := s.AddHybrid([]byte("k"), &p384.PublicKey, nil); err == nil {
+	if err := s.AddHybrid([]byte("k"), []SignerRole{RoleIssuer}, &p384.PublicKey, nil); err == nil {
 		t.Fatal("registered a hybrid anchor with a nil post-quantum half")
 	}
-	if err := s.AddHybrid([]byte("k"), &p256.PublicKey, mlPub); err == nil {
+	if err := s.AddHybrid([]byte("k"), []SignerRole{RoleIssuer}, &p256.PublicKey, mlPub); err == nil {
 		t.Fatal("registered a hybrid anchor whose classical half is not P-384")
 	}
 	if s.Len() != 0 {
 		t.Fatal("a rejected key was still stored")
 	}
-	if err := s.AddHybrid([]byte("k"), &p384.PublicKey, mlPub); err != nil {
+	if err := s.AddHybrid([]byte("k"), []SignerRole{RoleIssuer}, &p384.PublicKey, mlPub); err != nil {
 		t.Fatalf("rejected a well-formed hybrid anchor: %v", err)
 	}
 }

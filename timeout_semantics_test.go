@@ -125,7 +125,7 @@ func TestReceiptExceedingItsLatencyBoundNeverVerifies(t *testing.T) {
 	}
 	kid := []byte("timeout-issuer")
 	set := xap.NewTrustAnchorSet()
-	if err := set.AddECDSAP256(kid, &priv.PublicKey); err != nil {
+	if err := set.AddECDSAP256(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}, &priv.PublicKey); err != nil {
 		t.Fatal(err)
 	}
 

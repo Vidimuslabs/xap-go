@@ -34,7 +34,7 @@ func chainFixture(t *testing.T) (anchors *xap.TrustAnchorSet, envA, envB []byte,
 	ec, mlPub, mlPriv := hybridKeys(t)
 	kid := []byte("ep-chain")
 	anchors = xap.NewTrustAnchorSet()
-	if err := anchors.AddHybrid(kid, &ec.PublicKey, mlPub); err != nil {
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
 		t.Fatal(err)
 	}
 

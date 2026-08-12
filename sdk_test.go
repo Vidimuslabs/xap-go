@@ -126,7 +126,7 @@ func TestTrustAnchorSetLen(t *testing.T) {
 	if s.Len() != 0 {
 		t.Fatal("empty set not zero length")
 	}
-	if err := s.AddEd25519([]byte("k1"), make([]byte, 32)); err != nil {
+	if err := s.AddEd25519([]byte("k1"), []SignerRole{RoleIssuer}, make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
 	if s.Len() != 1 {

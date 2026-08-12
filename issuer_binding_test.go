@@ -35,10 +35,10 @@ func TestMATIssuerMustMatchTheVerifyingKey(t *testing.T) {
 	kidA, kidB := []byte("kid-issuer-A"), []byte("kid-issuer-B")
 
 	anchors := xap.NewTrustAnchorSet()
-	if err := anchors.AddHybrid(kidA, &ecA.PublicKey, mlPubA); err != nil {
+	if err := anchors.AddHybrid(kidA, []xap.SignerRole{xap.RoleIssuer}, &ecA.PublicKey, mlPubA); err != nil {
 		t.Fatal(err)
 	}
-	if err := anchors.AddHybrid(kidB, &ecB.PublicKey, mlPubB); err != nil {
+	if err := anchors.AddHybrid(kidB, []xap.SignerRole{xap.RoleIssuer}, &ecB.PublicKey, mlPubB); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestMATWithoutIssuerKeyIDIsRejected(t *testing.T) {
 	ec, mlPub, mlPriv := hybridKeys(t)
 	kid := []byte("kid-issuer")
 	anchors := xap.NewTrustAnchorSet()
-	if err := anchors.AddHybrid(kid, &ec.PublicKey, mlPub); err != nil {
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer}, &ec.PublicKey, mlPub); err != nil {
 		t.Fatal(err)
 	}
 
@@ -93,5 +93,72 @@ func TestMATWithoutIssuerKeyIDIsRejected(t *testing.T) {
 	}
 	if !errors.Is(err, xap.ErrIssuerKeyMismatch) {
 		t.Fatalf("rejected, but not as an issuer mismatch: %v", err)
+	}
+}
+
+// The protocol's three signing roles are distinct — an issuer grants authority,
+// an enforcement point attests to a decision made under it, an agent commits in
+// advance to what it will propose. The anchor set used to be a flat map
+// consulted identically by all three parsers, so one trusted key could sign any
+// artifact kind: an agent's key could mint the authority grant it operates
+// under.
+func TestSignerRolesAreEnforcedPerArtifactKind(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("kid-agent")
+
+	agentOnly := xap.NewTrustAnchorSet()
+	if err := agentOnly.AddHybrid(kid, []xap.SignerRole{xap.RoleAgent}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+
+	m := issuerMAT("mat-by-agent", "agent-pretending", kid)
+	matPayload, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv := signHybrid(t, kid, ec, mlPriv, matPayload)
+	if _, err := xap.ParseMAT(matEnv, agentOnly); !errors.Is(err, xap.ErrAnchorRoleMismatch) {
+		t.Fatalf("agent key minted a MAT: err = %v", err)
+	}
+
+	rc := xap.Receipt{
+		Version: xap.ProtocolVersion, ID: "r-by-agent", ArtifactID: "mat-1",
+		Decision: "permit", ContextDigest: []byte{1},
+		Timing: xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:00Z"},
+	}
+	rp, err := rc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := xap.ParseReceipt(signHybrid(t, kid, ec, mlPriv, rp), agentOnly); !errors.Is(err, xap.ErrAnchorRoleMismatch) {
+		t.Fatalf("agent key minted a receipt: err = %v", err)
+	}
+
+	// Registered for the role it actually plays, the same key works — otherwise
+	// the two cases above would pass for the wrong reason.
+	issuerSet := xap.NewTrustAnchorSet()
+	if err := issuerSet.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := xap.ParseMAT(matEnv, issuerSet); err != nil {
+		t.Fatalf("MAT rejected by an anchor registered for issuing: %v", err)
+	}
+}
+
+// An anchor registered for nothing may sign nothing. Registration is where the
+// operator states intent, and "unstated means unrestricted" is the reading the
+// roles exist to remove — so it is refused at registration rather than silently
+// becoming the most permissive grant available.
+func TestAnchorMustNameARole(t *testing.T) {
+	ec, mlPub, _ := hybridKeys(t)
+	s := xap.NewTrustAnchorSet()
+	if err := s.AddHybrid([]byte("k"), nil, &ec.PublicKey, mlPub); err == nil {
+		t.Fatal("an anchor with no roles was registered")
+	}
+	if err := s.AddHybrid([]byte("k"), []xap.SignerRole{"auditor"}, &ec.PublicKey, mlPub); err == nil {
+		t.Fatal("an anchor with an unknown role was registered")
+	}
+	if s.Len() != 0 {
+		t.Fatalf("anchor set has %d entries after refused registrations", s.Len())
 	}
 }

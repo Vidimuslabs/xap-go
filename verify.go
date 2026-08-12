@@ -2,7 +2,6 @@ package xap
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -96,14 +95,31 @@ func (v VerificationResult) Failed() []string {
 	return out
 }
 
-// ReceiptEnvelopeHash is the canonical chain-link hash: SHA-256 over the COSE
-// signed receipt envelope bytes. A receipt's PriorReceiptHash carries this hash
-// of the immediately preceding receipt (¶0063, FIG. 11), so an append-only log
-// cannot delete or reorder receipts without breaking the chain.
-func ReceiptEnvelopeHash(envelope []byte) []byte {
-	h := sha256.Sum256(envelope)
-	return h[:]
-}
+// The chain link (¶0063, FIG. 11) is Receipt.Digest — a digest over the
+// canonical receipt payload. It was SHA-256 over the COSE envelope bytes, which
+// cannot carry the property the chain needs.
+//
+// A COSE_Sign1 envelope has no unique encoding for a given signed receipt. Two
+// separate mechanisms give an attacker holding no key material a second,
+// byte-distinct envelope that verifies identically:
+//
+//   - ECDSA admits both (r, s) and (r, n-s), and neither Go's ecdsa.Verify nor
+//     the composite hybrid verifier restricts s to the low half. Rewriting s
+//     leaves both signature halves valid.
+//   - The COSE unprotected header bucket is by construction not covered by the
+//     signature, so entries may be added or removed freely.
+//
+// Either rewrite changes the envelope hash while leaving a fully valid receipt,
+// which turns "the chain broke" into a statement a log holder can manufacture
+// about receipts nobody tampered with — and makes envelope-hash equality
+// useless as a dedup or replay key. Low-s canonicalization alone does not fix
+// it; the header bucket is malleable independently.
+//
+// So the link is defined over content the signature actually covers. The
+// payload is canonical by construction (¶0085) and now canonical by
+// verification (see canonical.Unmarshal), so one receipt has exactly one link
+// hash, and it is the same value whether computed from the decoded receipt or
+// from the payload bytes as signed.
 
 // Verify runs the verification state machine over the given input and returns a
 // structured result. It never panics on malformed input; every failure is a
@@ -289,9 +305,13 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 
 	// (6) Chain link to the prior receipt (¶0063).
 	if in.PriorReceipt != nil {
-		want := ReceiptEnvelopeHash(in.PriorReceipt.Envelope)
-		add("chain_link", bytes.Equal(rc.PriorReceiptHash, want),
-			"receipt.prior_hash vs hash(prior receipt envelope)")
+		want, err := in.PriorReceipt.Receipt.Digest()
+		if err != nil {
+			add("chain_link", false, fmt.Sprintf("digest prior receipt: %v", err))
+		} else {
+			add("chain_link", bytes.Equal(rc.PriorReceiptHash, want),
+				"receipt.prior_hash vs digest(prior receipt)")
+		}
 	}
 
 	// (7) Commitment binding + digest (¶0084A).

@@ -50,6 +50,8 @@ type Receipt struct {
 	// Timing records evaluation start/completion/elapsed (¶0053).
 	Timing Timing `cbor:"timing"`
 	// PriorReceiptHash chains this receipt to the previous one (FIG. 11, ¶0063).
+	// It carries the previous receipt's Digest — see Digest for why the link is
+	// defined over the payload rather than the envelope.
 	PriorReceiptHash []byte `cbor:"prior_hash,omitempty"`
 	// ResourceStateDigest supports optimistic concurrency consistency checks
 	// (¶0054).
@@ -124,6 +126,21 @@ type SignedReceipt struct {
 // Marshal returns the canonical CBOR payload of the receipt (¶0085).
 func (r *Receipt) Marshal() ([]byte, error) {
 	return canonical.Marshal(r)
+}
+
+// Digest returns the receipt digest: a digest over the canonical receipt
+// payload. It is the chain-link value a successor records in its
+// PriorReceiptHash (¶0063, FIG. 11), and it is the single definition of that
+// link — the enforcement point computing it at issuance and a verifier
+// recomputing it are calling the same function.
+//
+// It is deliberately a digest over the payload and not over the COSE envelope.
+// The payload is what the signature covers and what canonicalization pins to
+// one encoding; the envelope is neither, so envelope bytes cannot identify a
+// receipt. The reasoning is set out in full above Verifier.Verify's chain-link
+// step.
+func (r *Receipt) Digest() ([]byte, error) {
+	return canonical.DigestBytes(r)
 }
 
 // UnmarshalReceipt decodes a canonical CBOR payload into a Receipt.

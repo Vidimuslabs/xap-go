@@ -307,3 +307,65 @@ func latencyFixture(t *testing.T, boundMS int64) (matEnv []byte, anchors *xap.Tr
 		return signHybrid(t, kid, ec, mlPriv, p)
 	}
 }
+
+// The receipt's signed evaluation time and the MAT's signed validity interval
+// are both in hand, so placing one inside the other asks no clock anything.
+// VerifyExpiry sits outside Verify because expiry depends on "now" — sound, and
+// it never covered this case, so a receipt evaluated years after its governing
+// authority expired verified as valid (¶0065).
+func TestEvaluationMustFallInsideTheMATValidityWindow(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("val-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-window",
+		Issuer: xap.IssuerIdentity{ID: "issuer", KID: kid},
+		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
+		Replay: xap.ReplayProtection{
+			NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2026-01-02T00:00:00Z", InstanceID: "i",
+		},
+	}
+	mp, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv := signHybrid(t, kid, ec, mlPriv, mp)
+
+	sign := func(rc xap.Receipt) []byte {
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		start string
+		want  xap.CheckStatus
+	}{
+		{"years after expiry", "2030-06-01T00:00:00Z", xap.CheckFailed},
+		{"before it became valid", "2025-06-01T00:00:00Z", xap.CheckFailed},
+		{"inside the window", "2026-01-01T12:00:00Z", xap.CheckPassed},
+		{"unparseable", "not-a-time", xap.CheckFailed},
+		{"absent", "", xap.CheckFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := xap.Receipt{
+				Version: xap.ProtocolVersion, ID: "r", ArtifactID: "mat-window",
+				Decision: "permit", ContextDigest: []byte{1},
+				Timing: xap.Timing{Start: tc.start, Complete: tc.start},
+			}
+			res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{
+				ReceiptEnvelope: sign(rc), MATEnvelope: matEnv,
+			})
+			c := checkNamed(t, res, "evaluation_within_validity")
+			if c.Status != tc.want {
+				t.Fatalf("status = %q, want %q; detail=%q", c.Status, tc.want, c.Detail)
+			}
+		})
+	}
+}

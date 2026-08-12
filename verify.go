@@ -346,6 +346,25 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		}
 	}
 
+	// (4e) The evaluation happened while the authority was valid (¶0065).
+	//
+	// VerifyExpiry exists but sits outside Verify, on the stated grounds that
+	// expiry depends on "now", which is the verifier's clock and not part of the
+	// signed receipt. That reasoning is sound and does not cover this: the
+	// receipt's own Timing.Start is signed, the MAT's validity interval is
+	// signed, and comparing them asks no clock anything. A receipt evaluated
+	// four years after its governing MAT expired verified as valid.
+	//
+	// This is the pipeline's lifecycle gate (¶0065 makes expired artifacts an
+	// unconditional rejection), so an unparseable evaluation time fails rather
+	// than excusing itself — the same fail-closed reading MAT.Expired already
+	// takes on its own timestamps.
+	if mat != nil {
+		status, detail := withinWindow(rc.Timing.Start,
+			mat.Replay.NotBefore, mat.Replay.NotAfter, "MAT "+mat.ID)
+		addStatus("evaluation_within_validity", status, detail)
+	}
+
 	// (5) Runtime context digest + reproduced constraint outcomes (¶0010,
 	// ¶0095: recompute and compare).
 	if in.ReproducedContext != nil {
@@ -450,6 +469,24 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 					add("provenance_agreement", true, "receipt provenance matches the governing commitment")
 				}
 			}
+			// The commitment declares when it may be presented (¶0095B), and
+			// ValidateTemporal existed to check it while Verify never called it —
+			// the same gap as the MAT's interval, in a second artifact. Where the
+			// commitment also declares an action window, that is the narrower
+			// statement about when the action itself may occur, and it had no
+			// reader anywhere in the SDK.
+			cs, cd := withinWindow(rc.Timing.Start,
+				sc.Commitment.TemporalValidity.NotBefore, sc.Commitment.TemporalValidity.NotAfter,
+				"commitment "+sc.Commitment.ID)
+			addStatus("commitment_temporal", cs, cd)
+			if w := sc.Commitment.ActionWindow; w != nil {
+				ws, wd := withinWindow(rc.Timing.Start, w.NotBefore, w.NotAfter,
+					"commitment "+sc.Commitment.ID+"'s action window")
+				addStatus("commitment_action_window", ws, wd)
+			} else {
+				notPerformed("commitment_action_window", "the commitment declares no action window")
+			}
+
 			if len(rc.CommitmentDigest) > 0 {
 				cd, derr := sc.Commitment.Digest()
 				add("commitment_digest", derr == nil && bytes.Equal(cd, rc.CommitmentDigest),
@@ -572,4 +609,46 @@ func authorizedLatencyBound(mat *MAT) (int64, bool) {
 		}
 	}
 	return bound, bound > 0
+}
+
+// withinWindow reports whether an RFC3339 instant falls inside an RFC3339
+// validity interval, for the two comparisons a verifier can make between one
+// signed artifact's evaluation time and another's declared lifetime.
+//
+// Both values are signed, so no verifier clock is involved and the answer is
+// the same for everyone who ever checks it. An absent interval is NOT
+// PERFORMED — there is nothing to compare against, and reporting that as a pass
+// would assert a lifetime gate that was never applied. An absent or malformed
+// instant fails: this is ¶0065's lifecycle gate, where an artifact that cannot
+// be shown to be in force is treated as out of force.
+func withinWindow(instant, notBefore, notAfter, subject string) (CheckStatus, string) {
+	if notBefore == "" && notAfter == "" {
+		return CheckNotPerformed, subject + " declares no validity interval"
+	}
+	if instant == "" {
+		return CheckFailed, "receipt records no evaluation start time to place against " + subject
+	}
+	at, err := time.Parse(time.RFC3339, instant)
+	if err != nil {
+		return CheckFailed, fmt.Sprintf("evaluation start %q is not RFC3339: %v", instant, err)
+	}
+	if notBefore != "" {
+		nb, err := time.Parse(time.RFC3339, notBefore)
+		if err != nil {
+			return CheckFailed, fmt.Sprintf("%s not_before %q is not RFC3339: %v", subject, notBefore, err)
+		}
+		if at.Before(nb) {
+			return CheckFailed, fmt.Sprintf("evaluated %s, before %s becomes valid at %s", instant, subject, notBefore)
+		}
+	}
+	if notAfter != "" {
+		na, err := time.Parse(time.RFC3339, notAfter)
+		if err != nil {
+			return CheckFailed, fmt.Sprintf("%s not_after %q is not RFC3339: %v", subject, notAfter, err)
+		}
+		if at.After(na) {
+			return CheckFailed, fmt.Sprintf("evaluated %s, after %s expired at %s", instant, subject, notAfter)
+		}
+	}
+	return CheckPassed, fmt.Sprintf("evaluated %s, inside %s's validity interval", instant, subject)
 }

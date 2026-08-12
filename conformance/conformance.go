@@ -270,6 +270,7 @@ var VerifierChecks = []string{
 	"timing_within_authorized_bound",
 	"mat_signature",
 	"artifact_binding",
+	"evaluation_within_validity",
 	"scope_check",
 	"evidence_covers_obligations",
 	"evidence_asserted_fresh",
@@ -285,6 +286,8 @@ var VerifierChecks = []string{
 	"compliance_boundary_check",
 	"provenance_agreement",
 	"commitment_digest",
+	"commitment_temporal",
+	"commitment_action_window",
 }
 
 // NotPerformedCapableChecks are the checks that can legitimately report
@@ -298,6 +301,8 @@ var NotPerformedCapableChecks = []string{
 	"evidence_asserted_fresh",
 	"constraint_outcomes",
 	"timing_within_authorized_bound",
+	"commitment_temporal",
+	"commitment_action_window",
 }
 
 // CheckCoverage runs every receipt vector through the verifier and reports

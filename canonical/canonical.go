@@ -18,11 +18,25 @@
 package canonical
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	"github.com/fxamacker/cbor/v2"
 )
+
+// ErrNonCanonical reports that input decoded successfully but was not in the
+// canonical form ¶0085 requires.
+//
+// The decoder options below reject the encodings that change *meaning* —
+// duplicate keys, unknown fields, bad UTF-8. They do not reject encodings that
+// merely change *bytes*: map keys out of canonical order and integers at
+// non-minimal width both round-trip silently. That gap matters because the
+// protocol identifies artifacts by digests over these bytes. A digest is only
+// an identity if one value has one encoding, so decoding has to reject a second
+// encoding of the same value rather than accept it and canonicalize it away.
+var ErrNonCanonical = errors.New("canonical: input is not in canonical form")
 
 // encMode is the frozen Core Deterministic Encoding mode. Constructed once; a
 // cbor.EncMode is safe for concurrent use.
@@ -58,10 +72,27 @@ func Marshal(v any) ([]byte, error) {
 	return encMode.Marshal(v)
 }
 
-// Unmarshal decodes canonical CBOR bytes into v. Non-canonical inputs (unknown
-// fields, duplicate keys, indefinite lengths) are rejected.
+// Unmarshal decodes canonical CBOR bytes into v. Unknown fields, duplicate
+// keys, indefinite lengths and invalid UTF-8 are rejected by the decoder; input
+// that decodes but is not in canonical form is rejected by re-encoding the
+// result and requiring byte equality (ErrNonCanonical).
+//
+// The round trip is the only check that covers key ordering and integer width,
+// and it is exact rather than approximate: canonical encoding is a function, so
+// the canonical encoding of a decoded value either is the input or the input
+// was not canonical.
 func Unmarshal(data []byte, v any) error {
-	return decMode.Unmarshal(data, v)
+	if err := decMode.Unmarshal(data, v); err != nil {
+		return err
+	}
+	round, err := encMode.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("canonical: re-encoding decoded value: %w", err)
+	}
+	if !bytes.Equal(data, round) {
+		return fmt.Errorf("%w: %d bytes in, %d bytes re-encoded", ErrNonCanonical, len(data), len(round))
+	}
+	return nil
 }
 
 // Digest returns the SHA-256 digest of the canonical CBOR encoding of v

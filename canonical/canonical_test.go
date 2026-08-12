@@ -2,6 +2,7 @@ package canonical
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -160,5 +161,57 @@ func TestUnmarshalRejectsUnknownField(t *testing.T) {
 	var k known
 	if err := Unmarshal(extra, &k); err == nil {
 		t.Fatal("expected rejection of unknown field, got nil error")
+	}
+}
+
+// A digest is an identity only if one value has exactly one encoding. The
+// decoder options reject encodings that change meaning; these are encodings
+// that change only bytes, and they decode to a perfectly good value — which is
+// what makes them dangerous rather than harmless.
+func TestUnmarshalRejectsNonCanonicalOrderingAndWidth(t *testing.T) {
+	type pair struct {
+		A int `cbor:"a"`
+		B int `cbor:"b"`
+	}
+	cases := []struct {
+		name string
+		in   []byte
+	}{
+		{
+			// Map keys out of canonical order: "b" before "a". RFC 8949 §4.2
+			// sorts by the bytewise order of the encoded key.
+			name: "map keys out of order",
+			in:   []byte{0xA2, 0x61, 'b', 0x01, 0x61, 'a', 0x02},
+		},
+		{
+			// Integer 1 at non-minimal width (0x18 0x01 rather than 0x01).
+			name: "non-minimal integer width",
+			in:   []byte{0xA2, 0x61, 'a', 0x18, 0x01, 0x61, 'b', 0x02},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var p pair
+			err := Unmarshal(tc.in, &p)
+			if err == nil {
+				t.Fatalf("accepted a non-canonical encoding decoding to %+v", p)
+			}
+			if !errors.Is(err, ErrNonCanonical) {
+				t.Fatalf("rejected, but not as non-canonical: %v", err)
+			}
+		})
+	}
+
+	// The control: the canonical encoding of the same value is accepted.
+	canon, err := Marshal(pair{A: 1, B: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p pair
+	if err := Unmarshal(canon, &p); err != nil {
+		t.Fatalf("canonical encoding rejected: %v", err)
+	}
+	if p.A != 1 || p.B != 2 {
+		t.Fatalf("round trip changed the value: %+v", p)
 	}
 }

@@ -32,7 +32,7 @@ func decisionFixture(t *testing.T) (matEnv []byte, anchors *xap.TrustAnchorSet, 
 		},
 		Replay: xap.ReplayProtection{
 			NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z",
-			Nonce: []byte("n"), InstanceID: "inst-1",
+			Nonce: []byte("n"), InstanceID: "mat-decision",
 		},
 	}
 	mp, err := mat.Marshal()
@@ -247,7 +247,7 @@ func TestStrictestLatencyBoundWins(t *testing.T) {
 			{ID: "lat-a", Type: "latency_bound", MaxMS: 500},
 			{ID: "lat-b", Type: "latency_bound", MaxMS: 50},
 		},
-		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "i"},
+		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "mat-latency"},
 	}
 	mp, err := mat.Marshal()
 	if err != nil {
@@ -287,7 +287,7 @@ func latencyFixture(t *testing.T, boundMS int64) (matEnv []byte, anchors *xap.Tr
 		Version: xap.ProtocolVersion, ID: "mat-latency",
 		Issuer: xap.IssuerIdentity{ID: "issuer", KID: kid},
 		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
-		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "i"},
+		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "mat-latency"},
 	}
 	if boundMS > 0 {
 		mat.Constraints = []xap.Constraint{{ID: "c-lat", Type: "latency_bound", MaxMS: boundMS}}
@@ -326,7 +326,7 @@ func TestEvaluationMustFallInsideTheMATValidityWindow(t *testing.T) {
 		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
 		Replay: xap.ReplayProtection{
 			NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2026-01-02T00:00:00Z",
-			Nonce: []byte("n"), InstanceID: "i",
+			Nonce: []byte("n"), InstanceID: "mat-window",
 		},
 	}
 	mp, err := mat.Marshal()

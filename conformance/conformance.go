@@ -267,6 +267,11 @@ var VerifierChecks = []string{
 	"rationale_codes_known",
 	"controls_declared",
 	"receipt_final",
+	"enforcement_point_binding",
+	"policy_digest",
+	"replay_nonce_unseen",
+	"commitment_session_unseen",
+	"resource_state_digest",
 	"timing_self_consistent",
 	"timing_within_bound",
 	"timing_within_authorized_bound",
@@ -308,6 +313,26 @@ var NotPerformedCapableChecks = []string{
 	"commitment_action_window",
 	"timing_self_consistent",
 	"agent_identity_binding",
+	"enforcement_point_binding",
+	"policy_digest",
+	"replay_nonce_unseen",
+	"commitment_session_unseen",
+	"resource_state_digest",
+}
+
+// memorySeenSet is the runner's verifier-side replay store. Vectors select
+// whether one is supplied and whether it already holds the artifact, because
+// freshness is the one property the artifact files cannot express.
+type memorySeenSet struct{ seen map[string]bool }
+
+func newSeenSet() *memorySeenSet { return &memorySeenSet{seen: map[string]bool{}} }
+
+func (m *memorySeenSet) Seen(kind string, id []byte) bool {
+	return m.seen[kind+"/"+string(id)]
+}
+
+func (m *memorySeenSet) Record(kind string, id []byte) {
+	m.seen[kind+"/"+string(id)] = true
 }
 
 // Coverage records, for each check the verifier emits, which outcomes some
@@ -372,6 +397,20 @@ func buildVerifyInput(v vectors.Vector, anchors *xap.TrustAnchorSet) (xap.Verify
 	if in.ReceiptEnvelope, err = loadHex(v.ReceiptFile); err != nil {
 		return in, err
 	}
+	switch v.Replay {
+	case "":
+		// No seen-set: the replay checks report not performed.
+	case "fresh":
+		in.Replay = newSeenSet()
+	case "seen":
+		set := newSeenSet()
+		if err := preloadSeen(set, v); err != nil {
+			return in, err
+		}
+		in.Replay = set
+	default:
+		return in, fmt.Errorf("unknown replay mode %q", v.Replay)
+	}
 	if v.MATFile != "" {
 		if in.MATEnvelope, err = loadHex(v.MATFile); err != nil {
 			return in, err
@@ -404,38 +443,14 @@ func buildVerifyInput(v vectors.Vector, anchors *xap.TrustAnchorSet) (xap.Verify
 }
 
 func receiptVerifies(v vectors.Vector, anchors *xap.TrustAnchorSet, wantValid bool) (bool, string) {
-	in := xap.VerifyInput{}
-	var err error
-	if in.ReceiptEnvelope, err = loadHex(v.ReceiptFile); err != nil {
+	// Through buildVerifyInput, not a second copy of the same assembly. There
+	// were two, and they drifted the moment a vector gained an input the
+	// coverage walk knew about and the vector run did not — the replay seen-set
+	// was read by one and silently ignored by the other, so a vector could pin a
+	// check the run never exercised.
+	in, err := buildVerifyInput(v, anchors)
+	if err != nil {
 		return false, err.Error()
-	}
-	if v.MATFile != "" {
-		if in.MATEnvelope, err = loadHex(v.MATFile); err != nil {
-			return false, err.Error()
-		}
-	}
-	if v.CommitmentFile != "" {
-		if in.CommitmentEnvelope, err = loadHex(v.CommitmentFile); err != nil {
-			return false, err.Error()
-		}
-	}
-	if v.ContextFile != "" {
-		ctx, err := loadContext(v.ContextFile)
-		if err != nil {
-			return false, err.Error()
-		}
-		in.ReproducedContext = ctx
-	}
-	if v.PriorReceiptFile != "" {
-		penv, err := loadHex(v.PriorReceiptFile)
-		if err != nil {
-			return false, err.Error()
-		}
-		pr, err := xap.ParseReceipt(penv, anchors)
-		if err != nil {
-			return false, fmt.Sprintf("prior receipt: %v", err)
-		}
-		in.PriorReceipt = pr
 	}
 
 	res := xap.NewVerifier(anchors).Verify(in)
@@ -624,4 +639,40 @@ func DerivationCoverage(anchors *xap.TrustAnchorSet, m *vectors.Manifest) (map[s
 		}
 	}
 	return reached, nil
+}
+
+// preloadSeen fills a seen-set with the replay identifiers the vector's own
+// artifacts carry, so the verifier meets them as already-accepted.
+func preloadSeen(set *memorySeenSet, v vectors.Vector) error {
+	if v.MATFile != "" {
+		env, err := loadHex(v.MATFile)
+		if err != nil {
+			return err
+		}
+		payload, err := xap.UnverifiedPayload(env)
+		if err != nil {
+			return err
+		}
+		m, err := xap.UnmarshalMAT(payload)
+		if err != nil {
+			return err
+		}
+		set.Record(xap.ReplayKindMATNonce, m.Replay.Nonce)
+	}
+	if v.CommitmentFile != "" {
+		env, err := loadHex(v.CommitmentFile)
+		if err != nil {
+			return err
+		}
+		payload, err := xap.UnverifiedPayload(env)
+		if err != nil {
+			return err
+		}
+		c, err := xap.UnmarshalCommitment(payload)
+		if err != nil {
+			return err
+		}
+		set.Record(xap.ReplayKindCommitmentSession, []byte(c.SessionID))
+	}
+	return nil
 }

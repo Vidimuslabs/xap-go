@@ -44,7 +44,41 @@ type VerifyInput struct {
 	PriorReceipt *SignedReceipt
 	// CommitmentEnvelope is the COSE_Sign1 governing commitment object (optional).
 	CommitmentEnvelope []byte
+	// Replay is an optional seen-set for replay detection.
+	//
+	// Freshness is the one property in this protocol that cannot be established
+	// from signed artifacts alone: deciding whether a nonce has been seen before
+	// means remembering every nonce seen before. That is why ¶0017's zero-state
+	// property does not extend to it — but ¶0017 forbids enforcement-point
+	// state, not the VERIFIER's own. A relying party that keeps a seen-set can
+	// therefore check replay without learning anything from the issuer, which
+	// makes this verifiable-when-supplied rather than unverifiable.
+	//
+	// Absent, the replay checks report NOT PERFORMED, which is the honest answer
+	// for a caller that kept no state.
+	Replay ReplaySeenSet
 }
+
+// ReplaySeenSet records artifact identifiers a verifier has already accepted.
+//
+// Implementations decide scope and retention: a set covering a MAT's validity
+// window is sufficient, since an artifact outside its window is already rejected
+// on lifecycle grounds (¶0065). Seen must report whether the value was recorded
+// by an earlier call, and Record must add it.
+type ReplaySeenSet interface {
+	// Seen reports whether this identifier has been observed before.
+	Seen(kind string, id []byte) bool
+	// Record notes the identifier as observed.
+	Record(kind string, id []byte)
+}
+
+// Replay identifier kinds passed to a ReplaySeenSet.
+const (
+	// ReplayKindMATNonce is a MAT's replay nonce (field 138).
+	ReplayKindMATNonce = "mat_nonce"
+	// ReplayKindCommitmentSession is a commitment's session id (¶0095B).
+	ReplayKindCommitmentSession = "commitment_session"
+)
 
 // CheckStatus is the outcome of one verification step. A check is not a
 // boolean. "Not performed" is a third answer, and §9 spends a paragraph on why
@@ -207,6 +241,23 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			"receipt is a speculative evaluation pending confirmation (¶0078)")
 	} else {
 		add("receipt_final", true, "receipt records a settled decision")
+	}
+
+	// The receipt names its enforcement point, and until now that name had
+	// nothing to bind it to — a label, not evidence. The kid is checked against
+	// the key that actually verified the envelope, exactly as step 4 does for
+	// the MAT's issuer identity.
+	switch {
+	case len(rc.EnforcementPointKID) == 0:
+		notPerformed("enforcement_point_binding",
+			"receipt names no enforcement point key id")
+	case !bytes.Equal(rc.EnforcementPointKID, sr.SigningKID):
+		add("enforcement_point_binding", false, fmt.Sprintf(
+			"receipt claims enforcement point key %x but was signed by %x",
+			rc.EnforcementPointKID, sr.SigningKID))
+	default:
+		add("enforcement_point_binding", true, fmt.Sprintf(
+			"enforcement point %q signed with the key it names", rc.EnforcementPoint))
 	}
 
 	// (3) Timing against the bound the receipt declares (¶0053, ¶0088). This is
@@ -377,7 +428,39 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		}
 	}
 
-	// (4e) The evaluation happened while the authority was valid (¶0065).
+	// (4d2) The constraint-compilation digest (¶0076), now that it is defined
+	// over the portable constraint representation rather than an engine's
+	// internal form. It binds the receipt to the exact constraint set it was
+	// evaluated under, which a receipt naming a different compilation cannot
+	// satisfy.
+	if mat != nil {
+		if len(rc.PolicyDigest) == 0 {
+			notPerformed("policy_digest", "receipt discloses no policy digest")
+		} else if want, err := mat.ConstraintDigest(); err != nil {
+			add("policy_digest", false, fmt.Sprintf("compute constraint digest: %v", err))
+		} else {
+			add("policy_digest", bytes.Equal(rc.PolicyDigest, want),
+				"receipt.policy_digest vs the governing MAT's constraint set")
+		}
+	}
+
+	// (4e) Replay. Freshness is the one property no signed artifact can carry,
+	// so it is checked only when the caller supplies its own seen-set — its
+	// own, not the enforcement point's, which is why this does not breach
+	// ¶0017. See VerifyInput.Replay.
+	if mat != nil {
+		if in.Replay == nil {
+			notPerformed("replay_nonce_unseen", "caller supplied no replay seen-set")
+		} else if in.Replay.Seen(ReplayKindMATNonce, mat.Replay.Nonce) {
+			add("replay_nonce_unseen", false, fmt.Sprintf(
+				"MAT %s replay nonce has been accepted before", mat.ID))
+		} else {
+			in.Replay.Record(ReplayKindMATNonce, mat.Replay.Nonce)
+			add("replay_nonce_unseen", true, "MAT replay nonce not previously seen")
+		}
+	}
+
+	// (4f) The evaluation happened while the authority was valid (¶0065).
 	//
 	// VerifyExpiry exists but sits outside Verify, on the stated grounds that
 	// expiry depends on "now", which is the verifier's clock and not part of the
@@ -406,6 +489,31 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			add("context_digest", bytes.Equal(got, rc.ContextDigest),
 				"recomputed context digest vs receipt")
 		}
+		// The optimistic-concurrency digest (¶0054) is reproducible now that the
+		// receipt names the keys it was computed over. Without them a verifier
+		// holding the whole context still could not select the same subset.
+		switch {
+		case len(rc.ResourceStateDigest) == 0:
+			notPerformed("resource_state_digest", "receipt discloses no resource state digest")
+		case len(rc.ResourceKeys) == 0:
+			notPerformed("resource_state_digest",
+				"receipt carries a resource state digest but does not name the keys it covers")
+		default:
+			selected := make(map[string]string, len(rc.ResourceKeys))
+			for _, k := range rc.ResourceKeys {
+				if v, ok := in.ReproducedContext.ResourceState[k]; ok {
+					selected[k] = v
+				}
+			}
+			got, err := canonical.DigestBytes(selected)
+			if err != nil {
+				add("resource_state_digest", false, err.Error())
+			} else {
+				add("resource_state_digest", bytes.Equal(got, rc.ResourceStateDigest),
+					fmt.Sprintf("recomputed over %d disclosed key(s)", len(rc.ResourceKeys)))
+			}
+		}
+
 		if mat != nil {
 			status, detail := recomputeOutcomes(mat, *in.ReproducedContext, rc)
 			addStatus("constraint_outcomes", status, detail)
@@ -527,6 +635,20 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			if mat != nil {
 				as, ad := identitiesAgree(sc.Commitment.AgentIdentity, mat.MachineIdentity)
 				addStatus("agent_identity_binding", as, ad)
+			}
+
+			// Session replay, same rule and same reason as the MAT nonce.
+			switch {
+			case in.Replay == nil:
+				notPerformed("commitment_session_unseen", "caller supplied no replay seen-set")
+			case sc.Commitment.SessionID == "":
+				notPerformed("commitment_session_unseen", "commitment declares no session id")
+			case in.Replay.Seen(ReplayKindCommitmentSession, []byte(sc.Commitment.SessionID)):
+				add("commitment_session_unseen", false, fmt.Sprintf(
+					"commitment session %q has been accepted before", sc.Commitment.SessionID))
+			default:
+				in.Replay.Record(ReplayKindCommitmentSession, []byte(sc.Commitment.SessionID))
+				add("commitment_session_unseen", true, "commitment session not previously seen")
 			}
 
 			if len(rc.CommitmentDigest) > 0 {

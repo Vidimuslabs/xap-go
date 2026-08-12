@@ -101,6 +101,22 @@ func (m *MAT) ValidateStructure() error {
 	if m.Replay.InstanceID == "" {
 		return fmt.Errorf("MAT %s carries no instance id", m.ID)
 	}
+	// CF-xap-48. MAT.ID and replay.instance_id both describe themselves as the
+	// artifact instance identifier — ID as "¶0084 Authority Identifier / field
+	// 138 instance ID", and field 138 as carrying an "instance id" of its own.
+	// Two fields with one description is not a redundancy a verifier can ignore:
+	// if they may differ, every consumer has to know which one identifies the
+	// artifact, and the two answers are both defensible from the text.
+	//
+	// They are the same value, so the protocol now says so and this enforces it.
+	// The alternative — deleting one — is the cleaner schema but a breaking
+	// removal, and the corpus already treats them as equal everywhere, so
+	// requiring equality codifies existing practice rather than inventing a
+	// rule.
+	if m.Replay.InstanceID != m.ID {
+		return fmt.Errorf("MAT %s declares instance id %q; the artifact instance identifier and the replay instance id are the same value",
+			m.ID, m.Replay.InstanceID)
+	}
 	if _, err := time.Parse(time.RFC3339, m.Replay.NotBefore); err != nil {
 		return fmt.Errorf("MAT not_before: %w", err)
 	}

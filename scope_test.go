@@ -40,7 +40,7 @@ func scopeFixture(t *testing.T) (mat []byte, anchors *xap.TrustAnchorSet, sign f
 			NotBefore:  "2026-01-01T00:00:00Z",
 			NotAfter:   "2030-01-01T00:00:00Z",
 			Nonce:      []byte("n1"),
-			InstanceID: "inst-1",
+			InstanceID: "mat-scope-1",
 		},
 	}
 	mp, err := m.Marshal()

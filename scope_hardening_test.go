@@ -425,7 +425,7 @@ func TestComplianceBooleansAreRecomputed(t *testing.T) {
 		Scope:           xap.ExecutionScope{Actions: []string{"deploy"}, Resources: []string{"svc/*"}},
 		Boundary:        xap.PermissionBoundary{MaxImpact: 10, Exclusions: []string{"delete"}},
 		Delegation:      xap.DelegationRights{Allowed: false},
-		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "i"},
+		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "mat-c"},
 	}
 	matPayload, err := mat.Marshal()
 	if err != nil {
@@ -529,7 +529,7 @@ func TestReceiptProvenanceMustAgreeWithItsCommitment(t *testing.T) {
 		MachineIdentity: xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1}},
 		Issuer:          xap.IssuerIdentity{ID: "i", KID: kid},
 		Scope:           xap.ExecutionScope{Actions: []string{"deploy"}, Resources: []string{"svc/*"}},
-		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "i"},
+		Replay:          xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z", Nonce: []byte{1}, InstanceID: "mat-p"},
 	}
 	matPayload, _ := mat.Marshal()
 	matEnv := signES256(t, kid, priv, matPayload)

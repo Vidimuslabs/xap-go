@@ -45,7 +45,13 @@ type Receipt struct {
 	ConstraintOutcomes []ConstraintOutcome `cbor:"constraint_outcomes,omitempty"`
 	// EvidenceRefs is the evidence reference set (¶0050, ¶0048).
 	EvidenceRefs []EvidenceRef `cbor:"evidence_refs,omitempty"`
-	// PolicyDigest is the constraint-compilation digest (¶0076).
+	// PolicyDigest is the constraint-compilation digest (¶0076): a digest over
+	// the governing MAT's canonical constraint set — the same value
+	// MAT.ConstraintDigest computes. Defining it over the PORTABLE constraint
+	// representation (¶0087) rather than an engine's internal compiled form is
+	// what makes it checkable: an internal form is an implementation's own
+	// business, and two conforming engines may represent it differently and both
+	// be right, so a digest over it could never be compared by anyone.
 	PolicyDigest []byte `cbor:"policy_digest,omitempty"`
 	// Timing records evaluation start/completion/elapsed (¶0053).
 	Timing Timing `cbor:"timing"`
@@ -54,12 +60,23 @@ type Receipt struct {
 	// defined over the payload rather than the envelope.
 	PriorReceiptHash []byte `cbor:"prior_hash,omitempty"`
 	// ResourceStateDigest supports optimistic concurrency consistency checks
-	// (¶0054).
+	// (¶0054). It is a digest over the resource-state variables named by
+	// ResourceKeys, read at evaluation time.
 	ResourceStateDigest []byte `cbor:"resource_state_digest,omitempty"`
+	// ResourceKeys names the resource-state variables ResourceStateDigest was
+	// computed over. Without it the digest is unreproducible: a verifier holding
+	// the whole reproduced context still cannot tell which subset was read, so
+	// the field could be carried and compared by nobody.
+	ResourceKeys []string `cbor:"resource_keys,omitempty"`
 	// Speculative flags a speculative evaluation pending confirmation (¶0078).
 	Speculative bool `cbor:"speculative,omitempty"`
 	// EnforcementPoint identifies the emitting enforcement point.
 	EnforcementPoint string `cbor:"enforcement_point,omitempty"`
+	// EnforcementPointKID is the key id of the key that signed this receipt.
+	// Without it, EnforcementPoint is a name with nothing to bind it to — the
+	// same gap the MAT's issuer identity had before its kid was checked against
+	// the verifying key.
+	EnforcementPointKID []byte `cbor:"enforcement_point_kid,omitempty"`
 
 	// Commitment fields, present when a commitment object governs the session
 	// (¶0084A, ¶0097 addition). A per-action receipt carries the digest of the

@@ -42,6 +42,10 @@ type VerifyInput struct {
 	ReproducedContext *RuntimeContext
 	// PriorReceipt is the immediately preceding receipt in the chain (optional).
 	PriorReceipt *SignedReceipt
+	// ConfirmedReceipt is the speculative receipt this one claims to settle
+	// (optional, ¶0078). Supplying it lets the verifier check the claim rather
+	// than read it.
+	ConfirmedReceipt *SignedReceipt
 	// CommitmentEnvelope is the COSE_Sign1 governing commitment object (optional).
 	CommitmentEnvelope []byte
 	// Replay is an optional record of receipts this relying party has already
@@ -558,6 +562,41 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			addStatus("constraint_outcomes", status, detail)
 			consistent, why := decisionConsistent(mat, *in.ReproducedContext, rc)
 			add("decision_consistent", consistent, fmt.Sprintf("decision=%q: %s", rc.Decision, why))
+		}
+	}
+
+	// Confirmation of a speculative evaluation (¶0078). A receipt naming what it
+	// settles is making a checkable claim, so it is checked rather than read —
+	// otherwise `confirms` joins the fields that are signed, carried, and
+	// evaluated by nobody, which is the defect this review started from.
+	switch {
+	case len(rc.Confirms) == 0 && in.ConfirmedReceipt == nil:
+		notPerformed("confirmation_link", "receipt does not claim to confirm a speculative evaluation")
+	case in.ConfirmedReceipt == nil:
+		notPerformed("confirmation_link",
+			"receipt claims to confirm a speculative evaluation, but the confirmed receipt was not supplied")
+	case len(rc.Confirms) == 0:
+		add("confirmation_link", false,
+			"a confirmed receipt was supplied but this receipt claims to confirm nothing")
+	case rc.Speculative:
+		add("confirmation_link", false,
+			"a speculative receipt cannot itself be a confirmation")
+	case !in.ConfirmedReceipt.Receipt.Speculative:
+		add("confirmation_link", false, fmt.Sprintf(
+			"receipt %s is presented as confirmed but is not speculative",
+			in.ConfirmedReceipt.Receipt.ID))
+	default:
+		want, derr := in.ConfirmedReceipt.Receipt.Digest()
+		switch {
+		case derr != nil:
+			add("confirmation_link", false, fmt.Sprintf("digest confirmed receipt: %v", derr))
+		case !bytes.Equal(rc.Confirms, want):
+			add("confirmation_link", false, fmt.Sprintf(
+				"receipt.confirms does not name receipt %s", in.ConfirmedReceipt.Receipt.ID))
+		default:
+			add("confirmation_link", true, fmt.Sprintf(
+				"settles the speculative evaluation recorded by receipt %s",
+				in.ConfirmedReceipt.Receipt.ID))
 		}
 	}
 

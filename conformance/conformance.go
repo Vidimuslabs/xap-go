@@ -289,6 +289,7 @@ var VerifierChecks = []string{
 	"constraint_outcomes",
 	"decision_consistent",
 	"chain_link",
+	"confirmation_link",
 	"commitment_signature",
 	"commitment_binding",
 	"agent_identity_binding",
@@ -320,6 +321,7 @@ var NotPerformedCapableChecks = []string{
 	"policy_digest",
 	"replay_receipt_unseen",
 	"resource_state_digest",
+	"confirmation_link",
 }
 
 // memorySeenSet is the runner's record of receipts already acted upon. Vectors
@@ -429,6 +431,17 @@ func buildVerifyInput(v vectors.Vector, anchors *xap.TrustAnchorSet) (xap.Verify
 			return in, err
 		}
 		in.ReproducedContext = ctx
+	}
+	if v.ConfirmedReceiptFile != "" {
+		env, err := loadHex(v.ConfirmedReceiptFile)
+		if err != nil {
+			return in, err
+		}
+		cr, err := xap.ParseReceipt(env, anchors)
+		if err != nil {
+			return in, fmt.Errorf("confirmed receipt: %w", err)
+		}
+		in.ConfirmedReceipt = cr
 	}
 	if v.PriorReceiptFile != "" {
 		penv, err := loadHex(v.PriorReceiptFile)

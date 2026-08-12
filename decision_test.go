@@ -780,3 +780,92 @@ func TestResultNamesWhatWasNotPerformed(t *testing.T) {
 	}
 	t.Logf("bare receipt: valid=%v, %d checks not performed: %v", res.Valid, len(res.NotPerformed), res.NotPerformed)
 }
+
+// A speculative receipt is "pending confirmation" (¶0078), and until
+// confirmation issued a receipt there was nothing for it to be pending ON — the
+// mode emitted only artifacts a verifier refuses. A confirming receipt names
+// what it settles, and that claim is checked rather than read, or `confirms`
+// joins the fields that are signed, carried and evaluated by nobody.
+func TestConfirmationLinkIsChecked(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("conf-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(rc xap.Receipt) []byte {
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+	base := func(id string) xap.Receipt {
+		return xap.Receipt{
+			Version: xap.ProtocolVersion, ID: id, ArtifactID: "m",
+			Decision: "permit", ContextDigest: []byte{1},
+			Timing: xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z"},
+		}
+	}
+
+	spec := base("spec")
+	spec.Speculative = true
+	specSigned, err := xap.ParseReceipt(sign(spec), anchors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specDigest, err := spec.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	v := xap.NewVerifier(anchors)
+
+	// Settles the receipt it names.
+	ok := base("confirm")
+	ok.Confirms = specDigest
+	res := v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(ok), ConfirmedReceipt: specSigned})
+	if c := checkNamed(t, res, "confirmation_link"); c.Status != xap.CheckPassed {
+		t.Errorf("an honest confirmation gave %q: %s", c.Status, c.Detail)
+	}
+
+	// Names a different receipt.
+	wrong := base("confirm-wrong")
+	wrong.Confirms = append([]byte{0xFF}, specDigest[1:]...)
+	res = v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(wrong), ConfirmedReceipt: specSigned})
+	if c := checkNamed(t, res, "confirmation_link"); c.Status != xap.CheckFailed {
+		t.Errorf("a confirmation naming the wrong receipt gave %q: %s", c.Status, c.Detail)
+	}
+
+	// A confirmation cannot itself be pending, or confirmation never terminates.
+	pending := base("confirm-pending")
+	pending.Confirms = specDigest
+	pending.Speculative = true
+	res = v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(pending), ConfirmedReceipt: specSigned})
+	if c := checkNamed(t, res, "confirmation_link"); c.Status != xap.CheckFailed {
+		t.Errorf("a speculative confirmation gave %q: %s", c.Status, c.Detail)
+	}
+
+	// What it settles must have been speculative.
+	settled := base("already-settled")
+	settledSigned, err := xap.ParseReceipt(sign(settled), anchors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := settled.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2 := base("confirm-nonspec")
+	c2.Confirms = sd
+	res = v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(c2), ConfirmedReceipt: settledSigned})
+	if c := checkNamed(t, res, "confirmation_link"); c.Status != xap.CheckFailed {
+		t.Errorf("confirming a non-speculative receipt gave %q: %s", c.Status, c.Detail)
+	}
+
+	// An ordinary receipt claims to confirm nothing.
+	res = v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(base("plain"))})
+	if c := checkNamed(t, res, "confirmation_link"); c.Status != xap.CheckNotPerformed {
+		t.Errorf("an ordinary receipt gave %q: %s", c.Status, c.Detail)
+	}
+}

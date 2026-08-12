@@ -70,6 +70,16 @@ type Receipt struct {
 	ResourceKeys []string `cbor:"resource_keys,omitempty"`
 	// Speculative flags a speculative evaluation pending confirmation (¶0078).
 	Speculative bool `cbor:"speculative,omitempty"`
+	// Confirms is the digest of the speculative receipt this one settles
+	// (¶0078). A speculative evaluation is pending confirmation, and until this
+	// existed there was nothing for it to be pending ON: confirmation returned a
+	// verdict to its caller and produced no artifact, so a speculative receipt
+	// had no path to one an independent verifier would accept. A confirming
+	// receipt is an ordinary receipt — chained, signed, non-speculative —
+	// naming what it settles, and it is issued whether the confirmation
+	// succeeded or failed, because a race that voided a permit is exactly the
+	// event an audit log should carry.
+	Confirms []byte `cbor:"confirms,omitempty"`
 	// EnforcementPoint identifies the emitting enforcement point.
 	EnforcementPoint string `cbor:"enforcement_point,omitempty"`
 	// EnforcementPointKID is the key id of the key that signed this receipt.

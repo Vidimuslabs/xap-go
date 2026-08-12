@@ -184,7 +184,9 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			fmt.Sprintf("decision=%q controls=%d", rc.Decision, len(rc.Controls)))
 	}
 
-	// (3) Timing within the authorized latency bound (¶0053, ¶0088).
+	// (3) Timing against the bound the receipt declares (¶0053, ¶0088). This is
+	// self-consistency only: both sides come from the receipt. The bound the
+	// MAT actually authorized is checked in (4d), where the MAT is available.
 	add("timing_within_bound", rc.Timing.MaxMS == 0 || rc.Timing.ElapsedMS <= rc.Timing.MaxMS,
 		fmt.Sprintf("elapsed=%dms max=%dms", rc.Timing.ElapsedMS, rc.Timing.MaxMS))
 
@@ -304,6 +306,43 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 				add("evidence_asserted_fresh", false, fmt.Sprintf(
 					"receipt permits on evidence its own reference records as not fresh: %v", stale))
 			}
+		}
+	}
+
+	// (4d) The latency bound the MAT actually authorized (¶0051, ¶0053, ¶0088).
+	//
+	// timing_within_bound above compares the receipt's elapsed time to the
+	// receipt's own max_ms — both sides supplied by the artifact under
+	// judgement, which makes it a self-consistency check and nothing more. The
+	// authorized bound lives in the MAT, as a latency_bound constraint, and
+	// Constraint.MaxMS's own documentation says it is "consumed by the engine's
+	// latency path and by the verifier's timing check". Nothing read it.
+	//
+	// The gap had the shape the rest of this review keeps finding: max_ms is
+	// omitempty and 0 means unbounded, so the most permissive latency grant was
+	// the one requiring the least typing. Note the asymmetry it produced —
+	// delegation goes to real trouble to stop a CHILD MAT widening this bound
+	// (constraintAtLeastAsStrict, which refuses a child that sets MaxMS to 0),
+	// and then a receipt could ignore the bound outright by declaring none.
+	if mat != nil {
+		switch bound, ok := authorizedLatencyBound(mat); {
+		case !ok:
+			notPerformed("timing_within_authorized_bound",
+				"the governing MAT states no latency_bound constraint")
+		case rc.Timing.MaxMS == 0:
+			add("timing_within_authorized_bound", false, fmt.Sprintf(
+				"receipt declares no latency bound under a MAT authorizing %dms", bound))
+		case rc.Timing.MaxMS > bound:
+			add("timing_within_authorized_bound", false, fmt.Sprintf(
+				"receipt declares max_ms=%dms, wider than the %dms its MAT authorizes",
+				rc.Timing.MaxMS, bound))
+		case rc.Timing.ElapsedMS > bound:
+			add("timing_within_authorized_bound", false, fmt.Sprintf(
+				"evaluation took %dms against an authorized bound of %dms",
+				rc.Timing.ElapsedMS, bound))
+		default:
+			add("timing_within_authorized_bound", true, fmt.Sprintf(
+				"elapsed=%dms within the %dms the MAT authorizes", rc.Timing.ElapsedMS, bound))
 		}
 	}
 
@@ -512,4 +551,25 @@ func decisionConsistent(mat *MAT, ctx RuntimeContext, rc Receipt) (bool, string)
 // the verifier's clock, not part of the signed receipt.
 func VerifyExpiry(mat *MAT, at time.Time) error {
 	return mat.ValidateAt(at)
+}
+
+// authorizedLatencyBound returns the evaluation latency budget the MAT grants,
+// in milliseconds, and whether it states one at all.
+//
+// A MAT may carry more than one latency_bound constraint; the budget in force is
+// the strictest of them, since satisfying the artifact means satisfying every
+// constraint it states rather than the most generous one. A constraint with
+// MaxMS == 0 states no bound and is skipped rather than read as "unbounded" —
+// the same reading delegation already refuses when a child tries it.
+func authorizedLatencyBound(mat *MAT) (int64, bool) {
+	var bound int64
+	for _, c := range mat.Constraints {
+		if c.Type != "latency_bound" || c.MaxMS <= 0 {
+			continue
+		}
+		if bound == 0 || c.MaxMS < bound {
+			bound = c.MaxMS
+		}
+	}
+	return bound, bound > 0
 }

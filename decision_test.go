@@ -179,3 +179,131 @@ func TestWithheldOutcomesAreNotPerformedRatherThanPassed(t *testing.T) {
 		t.Fatalf("fully-recorded outcomes gave status %q: %s", c.Status, c.Detail)
 	}
 }
+
+// The MAT's latency_bound constraint is the authorized evaluation budget
+// (¶0051, ¶0088). timing_within_bound compares the receipt's elapsed time to
+// the receipt's OWN max_ms — both sides from the artifact under judgement — so
+// the bound the artifact was granted went unread. max_ms is omitempty and 0
+// means unbounded, which made the most permissive latency grant the one
+// requiring the least typing.
+func TestAuthorizedLatencyBoundIsEnforced(t *testing.T) {
+	matEnv, anchors, ctx, sign := latencyFixture(t, 100)
+	v := xap.NewVerifier(anchors)
+
+	for _, tc := range []struct {
+		name             string
+		maxMS, elapsedMS int64
+		want             xap.CheckStatus
+	}{
+		{"declares no bound at all", 0, 60000, xap.CheckFailed},
+		{"declares a wider bound than authorized", 90000, 30000, xap.CheckFailed},
+		{"within the authorized bound", 100, 12, xap.CheckPassed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := decisionReceipt(t, ctx)
+			rc.ArtifactID = "mat-latency"
+			rc.Decision = "permit"
+			rc.Timing = xap.Timing{
+				Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z",
+				ElapsedMS: tc.elapsedMS, MaxMS: tc.maxMS,
+			}
+			res := v.Verify(xap.VerifyInput{ReceiptEnvelope: sign(rc), MATEnvelope: matEnv})
+			c := checkNamed(t, res, "timing_within_authorized_bound")
+			if c.Status != tc.want {
+				t.Fatalf("status = %q, want %q; detail=%q", c.Status, tc.want, c.Detail)
+			}
+		})
+	}
+}
+
+// A MAT stating no latency_bound authorizes no budget, so there is nothing to
+// check against — not performed, not passed.
+func TestUnstatedLatencyBoundIsNotPerformed(t *testing.T) {
+	matEnv, anchors, ctx, sign := latencyFixture(t, 0)
+	rc := decisionReceipt(t, ctx)
+	rc.ArtifactID = "mat-latency"
+	rc.Decision = "permit"
+
+	res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{ReceiptEnvelope: sign(rc), MATEnvelope: matEnv})
+	if c := checkNamed(t, res, "timing_within_authorized_bound"); c.Status != xap.CheckNotPerformed {
+		t.Fatalf("status = %q, want not_performed; detail=%q", c.Status, c.Detail)
+	}
+}
+
+// The strictest of several latency bounds is the one in force: satisfying an
+// artifact means satisfying every constraint it states, not the loosest.
+func TestStrictestLatencyBoundWins(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("lat-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-latency",
+		Issuer: xap.IssuerIdentity{ID: "issuer", KID: kid},
+		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
+		Constraints: []xap.Constraint{
+			{ID: "lat-a", Type: "latency_bound", MaxMS: 500},
+			{ID: "lat-b", Type: "latency_bound", MaxMS: 50},
+		},
+		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", InstanceID: "i"},
+	}
+	mp, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv := signHybrid(t, kid, ec, mlPriv, mp)
+
+	rc := xap.Receipt{
+		Version: xap.ProtocolVersion, ID: "r", ArtifactID: "mat-latency",
+		Decision: "permit", ContextDigest: []byte{1},
+		Timing: xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z", ElapsedMS: 10, MaxMS: 200},
+	}
+	p, err := rc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{
+		ReceiptEnvelope: signHybrid(t, kid, ec, mlPriv, p), MATEnvelope: matEnv,
+	})
+	// 200ms sits inside the loosest bound and outside the strictest.
+	if c := checkNamed(t, res, "timing_within_authorized_bound"); c.Pass {
+		t.Fatalf("the loosest latency bound was treated as the one in force: %s", c.Detail)
+	}
+}
+
+// latencyFixture builds a MAT whose only constraint is a latency bound of
+// boundMS (or none at all when boundMS is 0).
+func latencyFixture(t *testing.T, boundMS int64) (matEnv []byte, anchors *xap.TrustAnchorSet, ctx xap.RuntimeContext, sign func(xap.Receipt) []byte) {
+	t.Helper()
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("lat-key")
+	anchors = xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleIssuer, xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	mat := xap.MAT{
+		Version: xap.ProtocolVersion, ID: "mat-latency",
+		Issuer: xap.IssuerIdentity{ID: "issuer", KID: kid},
+		Scope:  xap.ExecutionScope{Unconstrained: []string{xap.ScopeDimensionActions, xap.ScopeDimensionResources}},
+		Replay: xap.ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", InstanceID: "i"},
+	}
+	if boundMS > 0 {
+		mat.Constraints = []xap.Constraint{{ID: "c-lat", Type: "latency_bound", MaxMS: boundMS}}
+	}
+	mp, err := mat.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	matEnv = signHybrid(t, kid, ec, mlPriv, mp)
+	ctx = xap.RuntimeContext{Time: "2026-06-01T00:00:00Z"}
+	return matEnv, anchors, ctx, func(rc xap.Receipt) []byte {
+		t.Helper()
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+}

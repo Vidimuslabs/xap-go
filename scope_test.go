@@ -171,12 +171,3 @@ func TestVerifyReportsScopeNotCheckedWhenUndisclosed(t *testing.T) {
 			c.Status, xap.CheckNotPerformed, c.Detail)
 	}
 }
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}

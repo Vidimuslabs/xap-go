@@ -162,6 +162,28 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 	codesOK, badCode := allKnownCodes(rc.RationaleCodes)
 	add("rationale_codes_known", codesOK, badCode)
 
+	// permit_with_controls is the only decision that may permit an operation
+	// whose constraints did not all hold: the controls are what compensate
+	// (¶0049). A receipt claiming that decision while naming no control claims
+	// the exemption without the thing that earns it — and nothing looked, since
+	// Controls had no reader in the SDK at all.
+	//
+	// Checked here rather than beside the reproduced context because it is a
+	// property of the receipt alone: it holds or fails with no MAT, no context
+	// and no other artifact, which is the strongest form the check can take.
+	controlled := constants.Decision(rc.Decision) == constants.DecisionPermitWithControls
+	switch {
+	case controlled && len(rc.Controls) == 0:
+		add("controls_declared", false,
+			"decision is permit_with_controls but the receipt names no control")
+	case !controlled && len(rc.Controls) > 0:
+		add("controls_declared", false, fmt.Sprintf(
+			"decision is %q but the receipt names controls %v", rc.Decision, rc.Controls))
+	default:
+		add("controls_declared", true,
+			fmt.Sprintf("decision=%q controls=%d", rc.Decision, len(rc.Controls)))
+	}
+
 	// (3) Timing within the authorized latency bound (¶0053, ¶0088).
 	add("timing_within_bound", rc.Timing.MaxMS == 0 || rc.Timing.ElapsedMS <= rc.Timing.MaxMS,
 		fmt.Sprintf("elapsed=%dms max=%dms", rc.Timing.ElapsedMS, rc.Timing.MaxMS))
@@ -296,10 +318,10 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 				"recomputed context digest vs receipt")
 		}
 		if mat != nil {
-			ok, detail := recomputeOutcomes(mat, *in.ReproducedContext, rc)
-			add("constraint_outcomes", ok, detail)
-			add("decision_consistent", decisionConsistent(mat, *in.ReproducedContext, rc),
-				fmt.Sprintf("decision=%q", rc.Decision))
+			status, detail := recomputeOutcomes(mat, *in.ReproducedContext, rc)
+			addStatus("constraint_outcomes", status, detail)
+			consistent, why := decisionConsistent(mat, *in.ReproducedContext, rc)
+			add("decision_consistent", consistent, fmt.Sprintf("decision=%q: %s", rc.Decision, why))
 		}
 	}
 
@@ -413,38 +435,75 @@ func allKnownCodes(codes []string) (bool, string) {
 // reproduced context and the MAT's constraint set, confirming the receipt's
 // recorded outcome matches an independent evaluation (¶0095). Outcomes are
 // matched by constraint ID.
-func recomputeOutcomes(mat *MAT, ctx RuntimeContext, rc Receipt) (bool, string) {
+//
+// It reports a status rather than a boolean because "every outcome the receipt
+// recorded was right" and "every constraint the MAT states was checked" are
+// different claims, and the loop only ever established the first. A receipt
+// recording no outcomes at all satisfied it vacuously — the check passed by
+// having nothing to disagree with, which is the reading CheckNotPerformed
+// exists to prevent.
+//
+// Silence about a constraint is legitimate (selective disclosure, ¶0071,
+// ¶0079). It is simply not a pass.
+func recomputeOutcomes(mat *MAT, ctx RuntimeContext, rc Receipt) (CheckStatus, string) {
 	byID := make(map[string]Constraint, len(mat.Constraints))
 	for _, c := range mat.Constraints {
 		byID[c.ID] = c
 	}
+	recorded := make(map[string]bool, len(rc.ConstraintOutcomes))
 	for _, rec := range rc.ConstraintOutcomes {
 		c, ok := byID[rec.ConstraintID]
 		if !ok {
-			return false, fmt.Sprintf("receipt references unknown constraint %q", rec.ConstraintID)
+			return CheckFailed, fmt.Sprintf("receipt references unknown constraint %q", rec.ConstraintID)
 		}
 		if got := c.Evaluate(ctx); got != rec.Satisfied {
-			return false, fmt.Sprintf("constraint %q recomputed=%v recorded=%v", rec.ConstraintID, got, rec.Satisfied)
+			return CheckFailed, fmt.Sprintf("constraint %q recomputed=%v recorded=%v", rec.ConstraintID, got, rec.Satisfied)
+		}
+		recorded[rec.ConstraintID] = true
+	}
+	var missing []string
+	for _, c := range mat.Constraints {
+		if !recorded[c.ID] {
+			missing = append(missing, c.ID)
 		}
 	}
-	return true, ""
+	if len(missing) > 0 {
+		return CheckNotPerformed, fmt.Sprintf(
+			"receipt records no outcome for %v, so those constraints were not re-evaluated", missing)
+	}
+	if len(mat.Constraints) == 0 {
+		return CheckNotPerformed, "the governing MAT states no constraints"
+	}
+	return CheckPassed, fmt.Sprintf("all %d recorded outcomes match an independent evaluation", len(mat.Constraints))
 }
 
 // decisionConsistent checks that the recorded decision is consistent with an
 // independent evaluation of the constraint set against the reproduced context
-// (¶0047, ¶0049). A permit requires every constraint to hold; a deny or
-// permit-with-controls is permitted regardless (a deny may arise from any
-// unconditional-denial path, and controls may compensate for a soft failure).
-func decisionConsistent(mat *MAT, ctx RuntimeContext, rc Receipt) bool {
-	if constants.Decision(rc.Decision) != constants.DecisionPermit {
-		return true
+// (¶0047, ¶0049).
+//
+// A permit requires every constraint to hold. A deny is consistent with
+// anything — it may arise from any unconditional-denial path. A
+// permit_with_controls permits an operation whose constraints did not all hold,
+// but only because the controls compensate, so it is consistent exactly when
+// controls are named; the earlier form returned true for every decision that
+// was not exactly "permit", which handed the same exemption to a receipt that
+// named none.
+func decisionConsistent(mat *MAT, ctx RuntimeContext, rc Receipt) (bool, string) {
+	switch constants.Decision(rc.Decision) {
+	case constants.DecisionDeny:
+		return true, "denials are consistent with any constraint state"
+	case constants.DecisionPermitWithControls:
+		if len(rc.Controls) == 0 {
+			return false, "permit_with_controls excuses a failing constraint only through the controls it applies, and none are named"
+		}
+		return true, fmt.Sprintf("permitted under %d compensating control(s)", len(rc.Controls))
 	}
 	for _, c := range mat.Constraints {
 		if !c.Evaluate(ctx) {
-			return false
+			return false, fmt.Sprintf("permit, but constraint %q does not hold in the reproduced context", c.ID)
 		}
 	}
-	return true
+	return true, "permit, and every constraint holds"
 }
 
 // VerifyExpiry is a convenience lifecycle check the caller may run against the

@@ -41,6 +41,11 @@ type SignedMAT struct {
 	Envelope []byte
 	// MAT is the decoded payload (populated after ParseMAT).
 	MAT MAT
+	// SigningKID is the key id of the anchor that actually verified the
+	// envelope. Kept because "which key signed this" is a different question
+	// from "which key does the body claim signed this", and only the first is
+	// evidence.
+	SigningKID []byte
 }
 
 // ConstraintDigest returns the canonical digest over the MAT's constraint set

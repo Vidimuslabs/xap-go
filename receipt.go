@@ -121,6 +121,8 @@ type ProvenanceRef struct {
 type SignedReceipt struct {
 	Envelope []byte
 	Receipt  Receipt
+	// SigningKID is the key id of the anchor that verified the envelope.
+	SigningKID []byte
 }
 
 // Marshal returns the canonical CBOR payload of the receipt (¶0085).

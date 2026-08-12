@@ -157,6 +157,8 @@ type CommitmentProvenance struct {
 type SignedCommitment struct {
 	Envelope   []byte
 	Commitment CommitmentObject
+	// SigningKID is the key id of the anchor that verified the envelope.
+	SigningKID []byte
 }
 
 // Digest returns the commitment digest — a hash over the canonical commitment

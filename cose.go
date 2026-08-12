@@ -1,6 +1,7 @@
 package xap
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -270,11 +271,28 @@ func verifyEnvelope(envelope []byte, anchors *TrustAnchorSet) (payload []byte, k
 	return msg.Payload, kid, nil
 }
 
+// ErrIssuerKeyMismatch reports that a MAT's signed issuer identity names a key
+// id other than the one that actually verified it.
+var ErrIssuerKeyMismatch = errors.New("xap: MAT issuer key id does not match the verifying anchor")
+
 // ParseMAT decodes and signature-verifies a COSE_Sign1 MAT envelope against the
 // trust anchor set. Signature failure is an unconditional-denial condition
 // (¶0045); callers map the error to ARTIFACT_SIGNATURE_FAILURE.
+//
+// It also binds the issuer identity the MAT *claims* to the key that actually
+// signed it. verifyEnvelope has always known which anchor verified, and every
+// caller discarded it, so IssuerIdentity.KID — documented as matching the
+// envelope's key id — was signed, carried, and never read. In a deployment
+// trusting more than one issuer, which is the deployment TrustAnchorSet exists
+// for (¶0066, FIG. 14), that let any trusted issuer mint an artifact naming
+// another: B signs, the body says A, and a verifier reports it as A's.
+//
+// The key id is required rather than checked-when-present. An artifact that
+// declines to name its issuing key is not thereby more trustworthy, and the
+// alternative reading — absence excuses the check — is the same "absence is not
+// a statement" defect ExecutionScope.Unconstrained exists to prevent.
 func ParseMAT(envelope []byte, anchors *TrustAnchorSet) (*SignedMAT, error) {
-	payload, _, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors)
 	if err != nil {
 		return nil, err
 	}
@@ -285,13 +303,20 @@ func ParseMAT(envelope []byte, anchors *TrustAnchorSet) (*SignedMAT, error) {
 	if err := m.ValidateStructure(); err != nil {
 		return nil, err
 	}
-	return &SignedMAT{Envelope: envelope, MAT: *m}, nil
+	if len(m.Issuer.KID) == 0 {
+		return nil, fmt.Errorf("%w: MAT %s names no issuer key id", ErrIssuerKeyMismatch, m.ID)
+	}
+	if !bytes.Equal(m.Issuer.KID, kid) {
+		return nil, fmt.Errorf("%w: MAT %s claims issuer key %x but was signed by %x",
+			ErrIssuerKeyMismatch, m.ID, m.Issuer.KID, kid)
+	}
+	return &SignedMAT{Envelope: envelope, MAT: *m, SigningKID: kid}, nil
 }
 
 // ParseReceipt decodes and signature-verifies a COSE_Sign1 receipt envelope
 // against the trust anchor set (enforcement point signature, ¶0050).
 func ParseReceipt(envelope []byte, anchors *TrustAnchorSet) (*SignedReceipt, error) {
-	payload, _, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors)
 	if err != nil {
 		return nil, err
 	}
@@ -299,14 +324,14 @@ func ParseReceipt(envelope []byte, anchors *TrustAnchorSet) (*SignedReceipt, err
 	if err != nil {
 		return nil, err
 	}
-	return &SignedReceipt{Envelope: envelope, Receipt: *r}, nil
+	return &SignedReceipt{Envelope: envelope, Receipt: *r, SigningKID: kid}, nil
 }
 
 // ParseCommitment decodes and signature-verifies a COSE_Sign1 commitment object
 // envelope against the agent's key in the anchor set. Signature failure maps to
 // COMMITMENT_OBJECT_SIGNATURE_FAILURE (¶0095A).
 func ParseCommitment(envelope []byte, anchors *TrustAnchorSet) (*SignedCommitment, error) {
-	payload, _, err := verifyEnvelope(envelope, anchors)
+	payload, kid, err := verifyEnvelope(envelope, anchors)
 	if err != nil {
 		return nil, err
 	}
@@ -314,5 +339,5 @@ func ParseCommitment(envelope []byte, anchors *TrustAnchorSet) (*SignedCommitmen
 	if err != nil {
 		return nil, err
 	}
-	return &SignedCommitment{Envelope: envelope, Commitment: *c}, nil
+	return &SignedCommitment{Envelope: envelope, Commitment: *c, SigningKID: kid}, nil
 }

@@ -35,7 +35,7 @@ func scopeFixture(t *testing.T) (mat []byte, anchors *xap.TrustAnchorSet, sign f
 			MaxPrivilegeDelta: 1,
 			Exclusions:        []string{"host:prod-web-db"},
 		},
-		Issuer: xap.IssuerIdentity{ID: "issuer-scope-test"},
+		Issuer: xap.IssuerIdentity{ID: "issuer-scope-test", KID: kid},
 		Replay: xap.ReplayProtection{
 			NotBefore:  "2026-01-01T00:00:00Z",
 			NotAfter:   "2030-01-01T00:00:00Z",

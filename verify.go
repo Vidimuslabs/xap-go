@@ -78,10 +78,16 @@ type Check struct {
 // match the xap-spec OpenAPI VerificationResult schema (lowercase), so the
 // server's /verify response is contract-accurate.
 type VerificationResult struct {
-	Valid      bool    `json:"valid"`
-	ArtifactID string  `json:"artifact_id"`
-	Decision   string  `json:"decision"`
-	Checks     []Check `json:"checks"`
+	Valid      bool   `json:"valid"`
+	ArtifactID string `json:"artifact_id"`
+	Decision   string `json:"decision"`
+	// Speculative reports that the receipt records a speculative evaluation
+	// pending confirmation (¶0078) rather than a settled authorization. It is
+	// surfaced as its own field, not left to a caller to dig out of the receipt,
+	// because the difference between "this was authorized" and "this was being
+	// considered" is the difference a verification result exists to state.
+	Speculative bool    `json:"speculative"`
+	Checks      []Check `json:"checks"`
 }
 
 // Failed returns the names of the checks that did not pass.
@@ -184,11 +190,31 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			fmt.Sprintf("decision=%q controls=%d", rc.Decision, len(rc.Controls)))
 	}
 
+	// A speculative evaluation is pending confirmation (¶0078) — a record of
+	// reasoning, not an authorization to act on. The flag is signed, and the
+	// verification result never mentioned it, so a speculative receipt was
+	// indistinguishable from a committed one to anyone reading Valid.
+	//
+	// It fails rather than reporting not-performed: nothing is missing here, the
+	// receipt says plainly what it is. A caller that wants speculative receipts
+	// reads the Speculative field and ignores this one check, which is a
+	// decision it has to take deliberately — the direction a fail-closed
+	// protocol should make easy.
+	res.Speculative = rc.Speculative
+	add("receipt_final", !rc.Speculative,
+		"receipt is a speculative evaluation pending confirmation (¶0078)")
+
 	// (3) Timing against the bound the receipt declares (¶0053, ¶0088). This is
 	// self-consistency only: both sides come from the receipt. The bound the
 	// MAT actually authorized is checked in (4d), where the MAT is available.
 	add("timing_within_bound", rc.Timing.MaxMS == 0 || rc.Timing.ElapsedMS <= rc.Timing.MaxMS,
 		fmt.Sprintf("elapsed=%dms max=%dms", rc.Timing.ElapsedMS, rc.Timing.MaxMS))
+
+	// elapsed_ms is the number every latency gate is applied to, and it was
+	// taken on faith while the two values that would refute it sat signed in the
+	// same struct. A receipt could claim 5ms across a window an hour wide.
+	status, detail := timingSelfConsistent(rc.Timing)
+	addStatus("timing_self_consistent", status, detail)
 
 	// (4) Governing MAT: signature, structure, artifact binding.
 	var mat *MAT
@@ -651,4 +677,52 @@ func withinWindow(instant, notBefore, notAfter, subject string) (CheckStatus, st
 		}
 	}
 	return CheckPassed, fmt.Sprintf("evaluated %s, inside %s's validity interval", instant, subject)
+}
+
+// timingClockSkewToleranceMS is how far ElapsedMS may sit from the Start..Complete
+// span before the two are treated as contradicting each other.
+//
+// RFC3339 permits second granularity, so a signer recording whole-second
+// timestamps and a sub-second elapsed measurement disagrees by up to a second
+// through truncation alone, with nothing wrong. Anything wider is the receipt
+// disagreeing with itself.
+const timingClockSkewToleranceMS = 1000
+
+// timingSelfConsistent checks the receipt's timing against itself: completion
+// does not precede start, elapsed is not negative, and elapsed agrees with the
+// window the same receipt declares.
+//
+// Start and Complete were never parsed. ElapsedMS is the value both latency
+// gates are applied to, so a receipt understating it escaped a bound it had
+// visibly exceeded — while carrying, signed, the two timestamps that refute the
+// claim. Timestamps are optional under selective disclosure (¶0079), so their
+// absence is not performed rather than failed; what is present must agree.
+func timingSelfConsistent(t Timing) (CheckStatus, string) {
+	if t.ElapsedMS < 0 {
+		return CheckFailed, fmt.Sprintf("elapsed_ms is negative (%d)", t.ElapsedMS)
+	}
+	if t.Start == "" || t.Complete == "" {
+		return CheckNotPerformed, "receipt does not disclose both start and complete"
+	}
+	start, err := time.Parse(time.RFC3339, t.Start)
+	if err != nil {
+		return CheckFailed, fmt.Sprintf("timing.start %q is not RFC3339: %v", t.Start, err)
+	}
+	complete, err := time.Parse(time.RFC3339, t.Complete)
+	if err != nil {
+		return CheckFailed, fmt.Sprintf("timing.complete %q is not RFC3339: %v", t.Complete, err)
+	}
+	if complete.Before(start) {
+		return CheckFailed, fmt.Sprintf("evaluation completed %s, before it started %s", t.Complete, t.Start)
+	}
+	span := complete.Sub(start).Milliseconds()
+	diff := span - t.ElapsedMS
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > timingClockSkewToleranceMS {
+		return CheckFailed, fmt.Sprintf(
+			"elapsed_ms=%d contradicts a start..complete window of %dms", t.ElapsedMS, span)
+	}
+	return CheckPassed, fmt.Sprintf("elapsed_ms=%d agrees with a %dms window", t.ElapsedMS, span)
 }

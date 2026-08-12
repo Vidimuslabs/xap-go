@@ -266,6 +266,8 @@ var VerifierChecks = []string{
 	"decision_valid",
 	"rationale_codes_known",
 	"controls_declared",
+	"receipt_final",
+	"timing_self_consistent",
 	"timing_within_bound",
 	"timing_within_authorized_bound",
 	"mat_signature",
@@ -303,6 +305,7 @@ var NotPerformedCapableChecks = []string{
 	"timing_within_authorized_bound",
 	"commitment_temporal",
 	"commitment_action_window",
+	"timing_self_consistent",
 }
 
 // CheckCoverage runs every receipt vector through the verifier and reports

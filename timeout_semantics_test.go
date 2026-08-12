@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+	"time"
 
 	xap "github.com/Vidimuslabs/xap-go"
 	"github.com/Vidimuslabs/xap-go/conformance"
@@ -140,13 +141,18 @@ func TestReceiptExceedingItsLatencyBoundNeverVerifies(t *testing.T) {
 		{"no bound declared", 5000, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// The completion timestamp has to follow the elapsed time it is
+			// paired with, or the receipt contradicts itself and this case
+			// stops being about the latency bound at all.
+			start := mustParse(t, "2026-07-01T00:00:00Z")
 			rc := xap.Receipt{
 				Version: xap.ProtocolVersion, ID: "rcpt-timing", ArtifactID: "mat-root",
 				Decision:       string(constants.DecisionDeny),
 				ContextDigest:  make([]byte, 32),
 				RationaleCodes: []string{constants.CodeConstraintEvaluationTimeout},
 				Timing: xap.Timing{
-					Start: "2026-07-01T00:00:00Z", Complete: "2026-07-01T00:00:00Z",
+					Start:     start.Format(time.RFC3339),
+					Complete:  start.Add(time.Duration(tc.elapsed) * time.Millisecond).Format(time.RFC3339),
 					ElapsedMS: tc.elapsed, MaxMS: tc.max,
 				},
 			}
@@ -163,4 +169,13 @@ func TestReceiptExceedingItsLatencyBoundNeverVerifies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func mustParse(t *testing.T, s string) time.Time {
+	t.Helper()
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ts
 }

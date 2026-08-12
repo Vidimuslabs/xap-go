@@ -369,3 +369,104 @@ func TestEvaluationMustFallInsideTheMATValidityWindow(t *testing.T) {
 		})
 	}
 }
+
+// elapsed_ms is the value both latency gates are applied to, and it was taken
+// on faith while the two timestamps that refute it sat signed in the same
+// struct. Start and Complete were never parsed at all.
+func TestTimingMustAgreeWithItself(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("timing-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	sign := func(tm xap.Timing) []byte {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: "r", ArtifactID: "mat-1",
+			Decision: "permit", ContextDigest: []byte{1}, Timing: tm,
+		}
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+
+	for _, tc := range []struct {
+		name string
+		tm   xap.Timing
+		want xap.CheckStatus
+	}{
+		{"elapsed understates a 60s window",
+			xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:01:00Z", ElapsedMS: 5},
+			xap.CheckFailed},
+		{"elapsed overstates the window",
+			xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:01Z", ElapsedMS: 600000},
+			xap.CheckFailed},
+		{"completion precedes start",
+			xap.Timing{Start: "2026-01-01T00:01:00Z", Complete: "2026-01-01T00:00:00Z", ElapsedMS: 0},
+			xap.CheckFailed},
+		{"negative elapsed",
+			xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:00Z", ElapsedMS: -1},
+			xap.CheckFailed},
+		{"agrees within second-granularity truncation",
+			xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:01Z", ElapsedMS: 640},
+			xap.CheckPassed},
+		{"timestamps withheld",
+			xap.Timing{ElapsedMS: 12},
+			xap.CheckNotPerformed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{ReceiptEnvelope: sign(tc.tm)})
+			c := checkNamed(t, res, "timing_self_consistent")
+			if c.Status != tc.want {
+				t.Fatalf("status = %q, want %q; detail=%q", c.Status, tc.want, c.Detail)
+			}
+		})
+	}
+}
+
+// A speculative evaluation is pending confirmation (¶0078) — a record of
+// reasoning, not an authorization. The flag was signed and the verification
+// result never mentioned it, so a speculative receipt was indistinguishable
+// from a committed one to anyone reading Valid.
+func TestSpeculativeReceiptIsNotAFinalAuthorization(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("spec-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	build := func(spec bool) []byte {
+		rc := xap.Receipt{
+			Version: xap.ProtocolVersion, ID: "r", ArtifactID: "mat-1",
+			Decision: "permit", ContextDigest: []byte{1}, Speculative: spec,
+			Timing: xap.Timing{Start: "2026-01-01T00:00:00Z", Complete: "2026-01-01T00:00:00Z"},
+		}
+		p, err := rc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return signHybrid(t, kid, ec, mlPriv, p)
+	}
+
+	res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{ReceiptEnvelope: build(true)})
+	if res.Valid {
+		t.Error("a speculative receipt verified as a final authorization")
+	}
+	if !res.Speculative {
+		t.Error("VerificationResult.Speculative is false for a speculative receipt")
+	}
+	if c := checkNamed(t, res, "receipt_final"); c.Pass {
+		t.Errorf("receipt_final passed for a speculative receipt: %s", c.Detail)
+	}
+
+	// A settled receipt is unaffected, or the check above says nothing.
+	res = xap.NewVerifier(anchors).Verify(xap.VerifyInput{ReceiptEnvelope: build(false)})
+	if !res.Valid {
+		t.Fatalf("a settled receipt was rejected: %v", res.Failed())
+	}
+	if res.Speculative {
+		t.Error("VerificationResult.Speculative is true for a settled receipt")
+	}
+}

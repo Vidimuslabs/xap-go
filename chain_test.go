@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"math/big"
 	"testing"
 
@@ -206,5 +207,54 @@ func TestChainLinkTracksPayloadNotEnvelope(t *testing.T) {
 	}
 	if !bytes.Equal(d1, d3) {
 		t.Fatal("digest of a decoded receipt differs from the original")
+	}
+}
+
+// The chain-link definition is a ratified protocol decision (CF-xap-44, ruled
+// by Papa 2026-08-12), so it is locked here rather than left to inference from
+// the malleability tests above. Those show the link survives envelope rewrites;
+// this states what the link IS, and fails if it ever regresses to hashing
+// envelope bytes.
+//
+// SPEC §7 is the normative statement. This is the executable one.
+func TestChainLinkIsThePayloadDigestNotTheEnvelopeHash(t *testing.T) {
+	anchors, envA, _, _ := chainFixture(t)
+	srA, err := xap.ParseReceipt(envA, anchors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	link, err := srA.Receipt.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// It IS the digest over the canonical payload.
+	payload, err := srA.Receipt.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPayloadDigest := sha256.Sum256(payload)
+	if !bytes.Equal(link, wantPayloadDigest[:]) {
+		t.Fatalf("chain link is not the canonical payload digest:\n link=%x\n want=%x",
+			link, wantPayloadDigest)
+	}
+
+	// It is NOT the hash of the envelope. This is the regression that matters:
+	// envelope bytes are not unique to a receipt, so an envelope-derived link
+	// is a link over something a third party can change.
+	envelopeHash := sha256.Sum256(envA)
+	if bytes.Equal(link, envelopeHash[:]) {
+		t.Fatal("chain link has regressed to hashing the COSE envelope")
+	}
+
+	// And the payload the signature covers is the payload the digest is taken
+	// over — otherwise the two could drift apart without either test noticing.
+	signedPayload, err := xap.UnverifiedPayload(envA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(signedPayload, payload) {
+		t.Fatal("the payload carried in the envelope differs from the canonical re-encoding")
 	}
 }

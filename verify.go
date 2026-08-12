@@ -118,6 +118,18 @@ type VerificationResult struct {
 	Valid      bool   `json:"valid"`
 	ArtifactID string `json:"artifact_id"`
 	Decision   string `json:"decision"`
+	// NotPerformed names every check the inputs did not permit re-evaluating.
+	//
+	// Valid answers "was anything refuted", not "how much was established", and
+	// those diverge: a receipt disclosing almost nothing is Valid because
+	// nothing contradicted it. Round 3 found the sharper form — where the party
+	// who benefits from a check not running is the party who controls whether it
+	// can run, not-performed is a downgrade they select. Individual cases are
+	// fixed by making the obligation-bearing ones fail instead (see
+	// identitiesAgree), but a relying party still needs to see the shape of what
+	// went unchecked without walking Checks itself, and to be able to require a
+	// minimum before acting.
+	NotPerformed []string `json:"not_performed,omitempty"`
 	// Speculative reports that the receipt records a speculative evaluation
 	// pending confirmation (¶0078) rather than a settled authorization. It is
 	// surfaced as its own field, not left to a caller to dig out of the receipt,
@@ -173,8 +185,11 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		res.Checks = append(res.Checks, Check{
 			Name: name, Pass: status != CheckFailed, Status: status, Detail: detail,
 		})
-		if status == CheckFailed {
+		switch status {
+		case CheckFailed:
 			res.Valid = false
+		case CheckNotPerformed:
+			res.NotPerformed = append(res.NotPerformed, name)
 		}
 	}
 	add := func(name string, pass bool, detail string) {
@@ -622,9 +637,20 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			// commitment also declares an action window, that is the narrower
 			// statement about when the action itself may occur, and it had no
 			// reader anywhere in the SDK.
+			// temporal_validity is a REQUIRED field of a commitment (¶0095B), so
+			// an absent one is a malformed commitment rather than an undisclosed
+			// one. That distinction is what stops not-performed becoming a
+			// downgrade the agent selects: an agent signs its own commitment, so
+			// leaving out the window it is bound by would otherwise remove the
+			// check rather than fail it. Same rule as identitiesAgree.
 			cs, cd := withinWindow(rc.Timing.Start,
 				sc.Commitment.TemporalValidity.NotBefore, sc.Commitment.TemporalValidity.NotAfter,
 				"commitment "+sc.Commitment.ID)
+			if cs == CheckNotPerformed {
+				cs, cd = CheckFailed, fmt.Sprintf(
+					"commitment %s declares no temporal validity, which ¶0095B requires of it",
+					sc.Commitment.ID)
+			}
 			addStatus("commitment_temporal", cs, cd)
 			if w := sc.Commitment.ActionWindow; w != nil {
 				ws, wd := withinWindow(rc.Timing.Start, w.NotBefore, w.NotAfter,
@@ -864,13 +890,28 @@ func timingSelfConsistent(t Timing) (CheckStatus, string) {
 //
 // Comparison is by canonical digest rather than field by field: MachineIdentity
 // nests (a composite identity carries a list of them), and a hand-written
-// comparison would silently ignore whichever nested field it forgot. An absent
-// identity on either side is NOT PERFORMED — there is nothing to compare, and
-// reporting that as agreement would assert a binding that was never checked.
+// comparison would silently ignore whichever nested field it forgot.
+//
+// Absence is where this gets interesting, and the first version got it wrong.
+// Reporting NOT PERFORMED whenever either side is silent handed the agent a
+// downgrade: an agent signs its own commitment, so an agent operating under a
+// MAT that authorizes SOMEONE ELSE could omit its identity and the binding
+// simply would not run. Naming the wrong agent failed; naming nobody passed.
+//
+// The rule that separates the two cases: NOT PERFORMED is for a VERIFIER
+// lacking inputs, not for an artifact withholding what it was obliged to
+// provide. When the MAT names the identity it authorizes, it has imposed an
+// obligation, and a commitment that declines to answer has not left the binding
+// unavailable — it has defeated it. That fails. Only when the MAT itself names
+// no identity is there genuinely nothing to bind.
 func identitiesAgree(agent, authorized MachineIdentity) (CheckStatus, string) {
-	if identityUnset(agent) || identityUnset(authorized) {
+	if identityUnset(authorized) {
 		return CheckNotPerformed,
-			"commitment or governing MAT does not disclose an identity to bind"
+			"the governing MAT names no machine identity, so there is nothing to bind to"
+	}
+	if identityUnset(agent) {
+		return CheckFailed,
+			"the governing MAT authorizes a specific machine identity and the commitment names none"
 	}
 	a, err := canonical.DigestBytes(agent)
 	if err != nil {

@@ -9,6 +9,8 @@ import (
 func baseParent() MAT {
 	return MAT{
 		Version: ProtocolVersion, ID: "parent",
+		Issuer:           IssuerIdentity{ID: "i", KID: []byte("k")},
+		Replay:           ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "parent"},
 		Scope:            ExecutionScope{Actions: []string{"deploy", "read"}, Resources: []string{"svc/*"}},
 		Boundary:         PermissionBoundary{MaxImpact: 100, MaxPrivilegeDelta: 10, ResourceQuotas: map[string]int64{"api": 1000}, Exclusions: []string{"delete"}},
 		ProofObligations: []ProofObligation{{Category: "software_attestation", MaxAgeSeconds: 3600}},
@@ -23,6 +25,11 @@ func baseParent() MAT {
 func baseChild() MAT {
 	return MAT{
 		Version: ProtocolVersion, ID: "child", ParentID: "parent",
+		Issuer: IssuerIdentity{ID: "i", KID: []byte("k")},
+		Replay: ReplayProtection{
+			NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z",
+			Nonce: []byte("n"), InstanceID: "child",
+		},
 		Scope:            ExecutionScope{Actions: []string{"read"}, Resources: []string{"svc/api"}},
 		Boundary:         PermissionBoundary{MaxImpact: 50, MaxPrivilegeDelta: 5, ResourceQuotas: map[string]int64{"api": 500}, Exclusions: []string{"delete", "drop"}},
 		ProofObligations: []ProofObligation{{Category: "software_attestation", MaxAgeSeconds: 1800}},
@@ -148,5 +155,46 @@ func TestChainCycleRejected(t *testing.T) {
 	err := ValidateChain([]*MAT{&root, &mid, &loop})
 	if !errors.Is(err, ErrDelegationCycle) {
 		t.Fatalf("expected cycle rejection, got %v", err)
+	}
+}
+
+// constraintsStricter pairs parent to child through a map that keeps the last
+// write, so two constraints under one id let the pairing examine one while the
+// artifact carries another — and the issuer picks which by ordering. The rule
+// lived only in ValidateStructure, which the delegation API never calls, so the
+// same artifact was refused when parsed and accepted when handed here directly.
+//
+// Deliberately narrow: protocol version, issuer identity and replay protection
+// are artifact-validity questions ParseMAT owns, and every MAT arriving over the
+// wire passes through it. This validates what this code reads.
+func TestDelegationRejectsDuplicateConstraintIDs(t *testing.T) {
+	p, c := baseParent(), baseChild()
+	c.Constraints = append(c.Constraints, Constraint{
+		ID: "c-rate", Type: "rate_limit", MaxRate: ptrI64(1),
+	})
+	if err := ValidateDerivation(&p, &c); err == nil {
+		t.Fatal("a child carrying two constraints under one id was accepted")
+	}
+
+	p2, c2 := baseParent(), baseChild()
+	p2.Constraints = append(p2.Constraints, Constraint{
+		ID: "c-zone", Type: "network_zone", Zones: []string{"prod"},
+	})
+	if err := ValidateDerivation(&p2, &c2); err == nil {
+		t.Fatal("a parent carrying two constraints under one id was accepted")
+	}
+
+	// A chain validates its root the same way.
+	root := baseParent()
+	root.Constraints = append(root.Constraints, Constraint{ID: "c-rate", Type: "rate_limit", MaxRate: ptrI64(1)})
+	child := baseChild()
+	if err := ValidateChain([]*MAT{&root, &child}); err == nil {
+		t.Fatal("a chain whose root carries duplicate constraint ids was accepted")
+	}
+
+	// The honest case still passes, or none of the above proves anything.
+	okP, okC := baseParent(), baseChild()
+	if err := ValidateDerivation(&okP, &okC); err != nil {
+		t.Fatalf("a well-formed derivation was rejected: %v", err)
 	}
 }

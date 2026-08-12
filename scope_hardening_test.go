@@ -439,6 +439,7 @@ func TestComplianceBooleansAreRecomputed(t *testing.T) {
 	}
 	commit := xap.CommitmentObject{
 		Version: xap.ProtocolVersion, ID: "c-1",
+		AgentIdentity:    xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1, 2, 3}},
 		SessionID:        "s",
 		DeclaredActions:  xap.DeclaredActionSet{ActionTypes: []string{"deploy"}, Resources: []string{"svc/*"}},
 		TemporalValidity: xap.TemporalValidity{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z"},
@@ -538,6 +539,7 @@ func TestReceiptProvenanceMustAgreeWithItsCommitment(t *testing.T) {
 	parentDigest := []byte{9, 9, 9, 9}
 	commit := xap.CommitmentObject{
 		Version: xap.ProtocolVersion, ID: "c-p", SessionID: "s",
+		AgentIdentity:    xap.MachineIdentity{Kind: "public_key", PublicKey: []byte{1}},
 		DeclaredActions:  xap.DeclaredActionSet{ActionTypes: []string{"deploy"}, Resources: []string{"svc/*"}},
 		TemporalValidity: xap.TemporalValidity{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2099-01-01T00:00:00Z"},
 		Binding:          xap.CommitmentBinding{ArtifactID: mat.ID, ConstraintDigest: cd},

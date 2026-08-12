@@ -105,6 +105,23 @@ func faultf(path, format string, args ...any) error {
 // parent→child derivation step, plus delegation permission and depth (¶0057,
 // ¶0041 field 134). It does not walk a chain; see ValidateChain.
 func ValidateDerivation(parent, child *MAT) error {
+	// Constraint ids, on both, because THIS function depends on them:
+	// constraintsStricter pairs parent to child through a map that keeps the
+	// last write, so two constraints under one id let the pairing examine one
+	// while the artifact carries another — and the issuer picks which by
+	// ordering.
+	//
+	// Deliberately not full ValidateStructure. Protocol version, issuer identity
+	// and replay protection are artifact-validity questions that ParseMAT owns,
+	// and every MAT arriving over the wire passes through it; requiring them
+	// here would impose an unrelated contract on callers reasoning about two
+	// derivations in isolation. The rule enforced is the one this code reads.
+	if err := parent.validateConstraintIDs(); err != nil {
+		return fmt.Errorf("parent %s: %w", parent.ID, err)
+	}
+	if err := child.validateConstraintIDs(); err != nil {
+		return fmt.Errorf("child %s: %w", child.ID, err)
+	}
 	if !parent.Delegation.Allowed {
 		return &DerivationFault{Path: FaultDelegationNotAllowed, Err: ErrDelegationNotAllowed}
 	}
@@ -429,6 +446,9 @@ func ValidateChain(chain []*MAT) error {
 	}
 	if chain[0].ParentID != "" {
 		return faultf(FaultChainNotRoot, "delegation: chain[0] %s is not a root (has parent %s)", chain[0].ID, chain[0].ParentID)
+	}
+	if err := chain[0].validateConstraintIDs(); err != nil {
+		return fmt.Errorf("chain root %s: %w", chain[0].ID, err)
 	}
 	seen := map[string]bool{chain[0].ID: true}
 	for i := 1; i < len(chain); i++ {

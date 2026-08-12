@@ -308,7 +308,6 @@ var NotPerformedCapableChecks = []string{
 	"evidence_asserted_fresh",
 	"constraint_outcomes",
 	"timing_within_authorized_bound",
-	"commitment_temporal",
 	"commitment_action_window",
 	"timing_self_consistent",
 	"agent_identity_binding",

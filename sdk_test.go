@@ -84,7 +84,9 @@ func TestConstraintStrictnessTypes(t *testing.T) {
 	_ = mk
 
 	parent := MAT{
-		Version: ProtocolVersion, ID: "p", Delegation: DelegationRights{Allowed: true},
+		Version: ProtocolVersion, ID: "p",
+		Issuer: IssuerIdentity{ID: "i", KID: []byte("k")},
+		Replay: ReplayProtection{NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2030-01-01T00:00:00Z", Nonce: []byte("n"), InstanceID: "p"}, Delegation: DelegationRights{Allowed: true},
 		Constraints: []Constraint{
 			{ID: "t", Type: "temporal", NotBefore: "2026-07-01T00:00:00Z", NotAfter: "2026-07-10T00:00:00Z"},
 			{ID: "p", Type: "param_bound", Param: "cpu", Min: ptrF64(0.1), Max: ptrF64(0.9)},

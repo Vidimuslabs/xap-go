@@ -538,7 +538,9 @@ func TestCommitmentAgentMustBeTheAuthorizedIdentity(t *testing.T) {
 	}{
 		{"a different agent", xap.MachineIdentity{Kind: "public_key", PublicKey: []byte("agent-B")}, xap.CheckFailed},
 		{"the authorized agent", authorized, xap.CheckPassed},
-		{"no identity disclosed", xap.MachineIdentity{Kind: "public_key"}, xap.CheckNotPerformed},
+		// The MAT names an identity, so declining to answer defeats the binding
+		// rather than leaving it unavailable — round 3.
+		{"no identity disclosed", xap.MachineIdentity{Kind: "public_key"}, xap.CheckFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{
@@ -741,3 +743,40 @@ func TestUnreproducibleResourceKeyIsNotPerformed(t *testing.T) {
 }
 
 func canonicalDigestOf(v any) ([]byte, error) { return canonical.DigestBytes(v) }
+
+// Valid answers "was anything refuted", not "how much was established". A
+// relying party needs the second question answered too, without walking Checks
+// itself — round 3 showed why: not-performed is selectable by whoever controls
+// disclosure, so its extent is part of the result, not a detail.
+func TestResultNamesWhatWasNotPerformed(t *testing.T) {
+	ec, mlPub, mlPriv := hybridKeys(t)
+	kid := []byte("np-key")
+	anchors := xap.NewTrustAnchorSet()
+	if err := anchors.AddHybrid(kid, []xap.SignerRole{xap.RoleEnforcementPoint}, &ec.PublicKey, mlPub); err != nil {
+		t.Fatal(err)
+	}
+	// A receipt alone: almost nothing can be re-evaluated.
+	rc := xap.Receipt{
+		Version: xap.ProtocolVersion, ID: "r", ArtifactID: "m",
+		Decision: "permit", ContextDigest: []byte{1},
+		Timing: xap.Timing{Start: "2026-06-01T00:00:00Z", Complete: "2026-06-01T00:00:00Z"},
+	}
+	p, err := rc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := xap.NewVerifier(anchors).Verify(xap.VerifyInput{ReceiptEnvelope: signHybrid(t, kid, ec, mlPriv, p)})
+	if !res.Valid {
+		t.Fatalf("a bare receipt was refuted: %v", res.Failed())
+	}
+	if len(res.NotPerformed) == 0 {
+		t.Fatal("a bare receipt reports nothing as not-performed, so Valid reads as full assurance")
+	}
+	for _, name := range res.NotPerformed {
+		c := checkNamed(t, res, name)
+		if c.Status != xap.CheckNotPerformed {
+			t.Errorf("%q listed as not-performed but status is %q", name, c.Status)
+		}
+	}
+	t.Logf("bare receipt: valid=%v, %d checks not performed: %v", res.Valid, len(res.NotPerformed), res.NotPerformed)
+}

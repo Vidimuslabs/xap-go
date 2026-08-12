@@ -113,22 +113,8 @@ func (m *MAT) ValidateStructure() error {
 	// removal, and the corpus already treats them as equal everywhere, so
 	// requiring equality codifies existing practice rather than inventing a
 	// rule.
-	// Constraint ids are how outcomes are matched to constraints at verification
-	// and how parent and child constraints are paired during delegation. A MAT
-	// carrying two constraints under one id collapses in both lookups — the
-	// surviving entry is whichever was written last — so an outcome recorded for
-	// that id marks BOTH as covered while only one was ever evaluated. Ordering
-	// then decides which constraint is enforced and which is invisible, and the
-	// issuer chooses the ordering.
-	seen := make(map[string]bool, len(m.Constraints))
-	for _, c := range m.Constraints {
-		if c.ID == "" {
-			return fmt.Errorf("MAT %s carries a constraint with no id", m.ID)
-		}
-		if seen[c.ID] {
-			return fmt.Errorf("MAT %s carries more than one constraint with id %q", m.ID, c.ID)
-		}
-		seen[c.ID] = true
+	if err := m.validateConstraintIDs(); err != nil {
+		return err
 	}
 	if m.Replay.InstanceID != m.ID {
 		return fmt.Errorf("MAT %s declares instance id %q; the artifact instance identifier and the replay instance id are the same value",
@@ -255,6 +241,33 @@ func (m *MAT) CoversOperation(action, resource string) error {
 	}
 	if resource != "" && contains(m.Boundary.Exclusions, resource) {
 		return fmt.Errorf("resource %q excluded by permission boundary", resource)
+	}
+	return nil
+}
+
+// validateConstraintIDs requires every constraint to carry a distinct, non-empty
+// id.
+//
+// Ids are how outcomes are matched to constraints at verification and how parent
+// and child are paired during derivation. A MAT carrying two constraints under
+// one id collapses in both lookups — the surviving entry is whichever was
+// written last — so an outcome recorded for that id marks BOTH as covered while
+// only one was ever evaluated, and the issuer decides which becomes invisible by
+// choosing the order.
+//
+// Separate from ValidateStructure because the delegation API needs exactly this
+// rule and none of the artifact-validity ones: it reads the constraint list, so
+// it validates the constraint list.
+func (m *MAT) validateConstraintIDs() error {
+	seen := make(map[string]bool, len(m.Constraints))
+	for _, c := range m.Constraints {
+		if c.ID == "" {
+			return fmt.Errorf("MAT %s carries a constraint with no id", m.ID)
+		}
+		if seen[c.ID] {
+			return fmt.Errorf("MAT %s carries more than one constraint with id %q", m.ID, c.ID)
+		}
+		seen[c.ID] = true
 	}
 	return nil
 }

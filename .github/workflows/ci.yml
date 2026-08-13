@@ -28,6 +28,35 @@ jobs:
         with:
           path: xap-go
           fetch-depth: 0
+      # Fork PRs and Dependabot runs receive no Actions secrets, so CI_PAT
+      # arrives empty and the checkout below dies with "Input required and not
+      # supplied: token" — an error that names actions/checkout and points
+      # nowhere near the cause. Verified on run 31426645776: "Checkout xap-spec
+      # (private sibling)" fails in 8s and every later step is skipped.
+      #
+      # This cannot be made GREEN before the flip. xap-spec is private, and
+      # neither a fork nor Dependabot can reach it by any route, so there is no
+      # credential to supply and no honest way to report the code as verified.
+      # What it can be is legible: fail here, saying which runs this hits and
+      # what removes it. See CF-xap-36 / CF-xap-21.
+      - name: preflight — credentials for the private sibling
+        env:
+          CI_PAT: ${{ secrets.CI_PAT }}
+        run: |
+          if [ -n "$CI_PAT" ]; then
+            echo "CI_PAT present; the private sibling can be checked out."
+            exit 0
+          fi
+          echo "::error title=No credentials for the private sibling::This run \
+          received no Actions secrets, so xap-spec (still private) cannot be \
+          checked out and nothing below could verify your change. Fork pull \
+          requests and Dependabot runs never receive them — this is not \
+          something your branch did wrong, and re-running will not help. It \
+          disappears when xap-spec is published and the 'replace' directive \
+          leaves go.mod (CF-xap-36). A maintainer can verify this branch by \
+          pushing it to the upstream repository."
+          exit 1
+
       - name: Checkout xap-spec (private sibling)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

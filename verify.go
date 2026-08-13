@@ -618,7 +618,24 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			add("commitment_signature", false, err.Error())
 		} else {
 			add("commitment_signature", true, "")
-			if mat != nil {
+
+			// noMAT is why the MAT-dependent checks below cannot run, and it is
+			// reported rather than left silent. A check that is simply not
+			// emitted leaves Valid=true with nothing to read, and the MAT
+			// envelope is a verifier INPUT chosen by whoever presents the
+			// receipt — so an omitted MAT removed the gate instead of failing
+			// it. Measured 2026-08-13: the corpus vector whose receipt permits
+			// under an over-claiming commitment verifies INVALID with the MAT
+			// and VALID without it, with commitment_scope absent from the result
+			// entirely. Same degradation scope_check already performs, and the
+			// same reasoning as the temporal window below — an input the
+			// presenter controls must not be able to delete a check.
+			const noMAT = "no governing MAT supplied, so the claim cannot be reproduced"
+
+			if mat == nil {
+				notPerformed("commitment_binding", noMAT)
+				notPerformed("commitment_scope", noMAT)
+			} else {
 				add("commitment_binding", sc.Commitment.VerifyBinding(mat) == nil,
 					"commitment constraint digest vs governing MAT")
 
@@ -647,21 +664,30 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			// An assertion about a reproducible fact is either right or it is a
 			// lie, so this is symmetric — unlike scope_check, a denial does not
 			// excuse a false claim.
-			if ac := rc.CommitmentCompliance; ac != nil && ac.Action != "" && mat != nil {
+			// Only two of the three need the MAT. commitment_check recomputes
+			// against the commitment's own declared set, which is in hand
+			// whenever the commitment is — gating it on the MAT dropped a check
+			// that was perfectly reproducible without one.
+			if ac := rc.CommitmentCompliance; ac != nil && ac.Action != "" {
 				wantCommitment := sc.Commitment.DeclaredActions.Covers(ac.Action, "") == nil
 				add("compliance_commitment_check", ac.CommitmentCheck == wantCommitment,
 					fmt.Sprintf("claimed %v, recomputed %v for action %q",
 						ac.CommitmentCheck, wantCommitment, ac.Action))
 
-				wantScope := mat.CoversOperation(ac.Action, "") == nil
-				add("compliance_scope_check", ac.ScopeCheck == wantScope,
-					fmt.Sprintf("claimed %v, recomputed %v for action %q",
-						ac.ScopeCheck, wantScope, ac.Action))
+				if mat == nil {
+					notPerformed("compliance_scope_check", noMAT)
+					notPerformed("compliance_boundary_check", noMAT)
+				} else {
+					wantScope := mat.CoversOperation(ac.Action, "") == nil
+					add("compliance_scope_check", ac.ScopeCheck == wantScope,
+						fmt.Sprintf("claimed %v, recomputed %v for action %q",
+							ac.ScopeCheck, wantScope, ac.Action))
 
-				wantBoundary := !contains(mat.Boundary.Exclusions, ac.Action)
-				add("compliance_boundary_check", ac.BoundaryCheck == wantBoundary,
-					fmt.Sprintf("claimed %v, recomputed %v for action %q",
-						ac.BoundaryCheck, wantBoundary, ac.Action))
+					wantBoundary := !contains(mat.Boundary.Exclusions, ac.Action)
+					add("compliance_boundary_check", ac.BoundaryCheck == wantBoundary,
+						fmt.Sprintf("claimed %v, recomputed %v for action %q",
+							ac.BoundaryCheck, wantBoundary, ac.Action))
+				}
 			}
 			// A receipt's provenance and its governing commitment's provenance
 			// name the same parent, or one of them is wrong. Verify() referenced

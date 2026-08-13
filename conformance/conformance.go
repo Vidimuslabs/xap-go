@@ -322,6 +322,14 @@ var NotPerformedCapableChecks = []string{
 	"replay_receipt_unseen",
 	"resource_state_digest",
 	"confirmation_link",
+	// The commitment checks that reproduce a claim against the GOVERNING MAT.
+	// Before 2026-08-13 these were emitted only when a MAT envelope happened to
+	// be supplied and were absent otherwise, which let whoever presents a
+	// receipt delete them by omission.
+	"commitment_binding",
+	"commitment_scope",
+	"compliance_scope_check",
+	"compliance_boundary_check",
 }
 
 // memorySeenSet is the runner's record of receipts already acted upon. Vectors

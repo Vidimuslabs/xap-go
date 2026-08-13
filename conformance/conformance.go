@@ -330,6 +330,15 @@ var NotPerformedCapableChecks = []string{
 	"commitment_scope",
 	"compliance_scope_check",
 	"compliance_boundary_check",
+	// Receipt-carried checks that need a caller-supplied input to reproduce.
+	// Before 2026-08-13 each was emitted only when its input happened to be
+	// present and was silently absent otherwise; xap.receiptCarriedChecks now
+	// reconciles them, so each can report not_performed and each needs pinning.
+	"artifact_binding",
+	"evaluation_within_validity",
+	"context_digest",
+	"decision_consistent",
+	"chain_link",
 }
 
 // memorySeenSet is the runner's record of receipts already acted upon. Vectors

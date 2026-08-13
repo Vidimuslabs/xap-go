@@ -3,6 +3,7 @@ package xap
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Vidimuslabs/xap-go/canonical"
@@ -747,7 +748,13 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 			// the one this artifact governs — an agent presenting a commitment
 			// under someone else's authority. Both are signed and both were
 			// carried; neither was ever compared to the other.
-			if mat != nil {
+			// Guarded on the MAT for the same reason as the two above, and
+			// missed by the first pass over this block: the commitment IS
+			// presented, so its agent-identity claim is presented, and the MAT
+			// is only the input needed to judge it.
+			if mat == nil {
+				notPerformed("agent_identity_binding", noMAT)
+			} else {
 				as, ad := identitiesAgree(sc.Commitment.AgentIdentity, mat.MachineIdentity)
 				addStatus("agent_identity_binding", as, ad)
 			}
@@ -760,7 +767,93 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 		}
 	}
 
+	// (9) Nothing the receipt claims goes unreported.
+	//
+	// Every check above sits behind a guard on an input the CALLER supplies —
+	// the governing MAT, the reproduced context, the prior receipt — while the
+	// claim it examines is carried by the receipt, which is always present. A
+	// guard that skips silently turns a missing input into a missing check, and
+	// a missing check is indistinguishable from a passed one in a result whose
+	// Valid field answers only "was anything refuted".
+	//
+	// This is the CF-xap-54 defect generalised. That one was found in the
+	// commitment block and fixed by hand; measuring afterwards showed the same
+	// shape in seven more guards, so the fix here is structural rather than
+	// another round of hand-patching. A check listed below that no branch above
+	// emitted is reported as not performed, naming the input that was missing —
+	// and a guard added later inherits the property without anyone remembering
+	// to. Silence stops being expressible.
+	emitted := make(map[string]bool, len(res.Checks))
+	for _, c := range res.Checks {
+		emitted[c.Name] = true
+	}
+	have := suppliedInputs{
+		mat:     mat != nil,
+		context: in.ReproducedContext != nil,
+		prior:   in.PriorReceipt != nil,
+	}
+	for _, c := range receiptCarriedChecks {
+		if !emitted[c.name] {
+			notPerformed(c.name, c.whyNotPerformed(have))
+		}
+	}
+
 	return res
+}
+
+// suppliedInputs records which caller-supplied artifacts this verification had.
+type suppliedInputs struct{ mat, context, prior bool }
+
+// receiptCarriedCheck names a check whose CLAIM the receipt carries, together
+// with the inputs needed to reproduce that claim.
+//
+// The distinction that matters is whose statement is under examination, not
+// which artifacts the computation touches. scope_check reads the MAT, but the
+// claim it tests — that this action was within authority — is the receipt's.
+// commitment_scope's claim belongs to a commitment, so it is absent when no
+// commitment is presented and appears here nowhere; SPEC §9.1 draws the line in
+// the same place.
+type receiptCarriedCheck struct {
+	name                string
+	mat, context, prior bool
+}
+
+func (c receiptCarriedCheck) whyNotPerformed(have suppliedInputs) string {
+	var missing []string
+	if c.mat && !have.mat {
+		missing = append(missing, "governing MAT")
+	}
+	if c.context && !have.context {
+		missing = append(missing, "reproduced context")
+	}
+	if c.prior && !have.prior {
+		missing = append(missing, "prior receipt")
+	}
+	if len(missing) == 0 {
+		// Every declared input was present and the check still did not run, so
+		// something narrower skipped it. Reported rather than guessed at.
+		return "the inputs did not permit re-evaluating this check"
+	}
+	return "no " + strings.Join(missing, " and no ") +
+		" supplied, so the receipt's claim cannot be reproduced"
+}
+
+// receiptCarriedChecks is the inventory the reconciliation above walks. Adding
+// a check here obliges a vector to pin it as not_performed, which is enforced
+// by conformance.NotPerformedCapableChecks.
+var receiptCarriedChecks = []receiptCarriedCheck{
+	{name: "artifact_binding", mat: true},
+	{name: "scope_check", mat: true},
+	{name: "evidence_covers_obligations", mat: true},
+	{name: "evidence_asserted_fresh", mat: true},
+	{name: "timing_within_authorized_bound", mat: true},
+	{name: "policy_digest", mat: true},
+	{name: "evaluation_within_validity", mat: true},
+	{name: "context_digest", context: true},
+	{name: "resource_state_digest", context: true},
+	{name: "constraint_outcomes", mat: true, context: true},
+	{name: "decision_consistent", mat: true, context: true},
+	{name: "chain_link", prior: true},
 }
 
 func allKnownCodes(codes []string) (bool, string) {

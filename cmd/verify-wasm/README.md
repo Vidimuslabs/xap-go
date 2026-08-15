@@ -77,7 +77,7 @@ Measured against the live site on 2026-08-15 rather than carried forward. The
 artifact served is:
 
 ```
-sha256(https://vidimuslabs.com/xap-verify.wasm) = 0d47ef75321aeddb516d0f3f5aae635a522ad52875f4879abe936fbf2d682e08
+sha256(https://vidimuslabs.com/xap-verify.wasm) = e194d78aa7b9ccffe3d501f516f1b2cc0783679085183c6c1d99a13dac0e7387
 ```
 
 This note previously named `cfea85d7…d19a6f`, deployed 2026-07-17 — two
@@ -89,17 +89,19 @@ note, because it reads as confirmation.
 So re-measure it against the live URL when it changes, not against the table
 above. The table says what the source produces; only a fetch says what is served.
 
-**A redeploy is outstanding.** The served artifact is the 1.26.5 build. Until
-the site is updated, it and this recipe disagree by design rather than by
-accident, and the reproducibility claim this file makes does not hold. Update
-this note by measurement once it ships.
+**Served and reproducible as of 2026-08-15.** The live artifact is
+byte-identical to a clean build from the recipe above, and it was checked by
+running it, not only by hashing it: the demo receipt returns `valid: true` and a
+receipt with one byte flipped returns `valid: false`.
 
-The 1.26.6 build was deployed briefly on 2026-08-15 and rolled back within
-minutes: it panicked in `BuildAnchors` before exporting `xapVerify`, so the page
-loaded and did nothing. Bytes matching the recipe is not the same as a binary
-that runs, and the rollback was decided by running the artifact rather than by
-hashing it. `cmd/verify-wasm` now has host tests that catch that class, and the
-recipe's digest is the build that passes them.
+That distinction is not pedantry — it is what this deploy cost. An earlier 1.26.6
+build (`3de964ae…b1b8fe`) went out the same day, matched its recipe digest
+exactly, and could not start: the embedded anchors declared no signer roles, so
+`BuildAnchors` rejected them and `main` panicked before exporting `xapVerify`.
+The page loaded and did nothing. It was rolled back within minutes, on
+measurement rather than on a report, and `cmd/verify-wasm` now has host tests for
+that class. **A digest confirms provenance. It says nothing about whether the
+binary runs, and this file should never be read as claiming otherwise.**
 
 One trap worth naming, because it produces a confident wrong answer:
 `/verify/xap-verify.wasm` also returns 200, but with the site's HTML fallback

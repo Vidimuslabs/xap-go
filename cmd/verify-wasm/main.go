@@ -35,13 +35,29 @@ func verify(_ js.Value, args []js.Value) any {
 	return map[string]any{"valid": true, "message": "Hybrid signature verified: ECDSA P-384 + ML-DSA-65 (both halves)."}
 }
 
-func main() {
+// exportNames are the globals the page calls. Named here rather than written
+// inline at the Set calls so a test can assert the page's contract by the same
+// list the code registers from: a rename that misses one is otherwise a working
+// build and a dead button.
+var exportNames = []string{"xapDemoReceiptHex", "xapVerify"}
+
+// register builds the anchor set and installs the exported functions on the JS
+// global. Separated from main so a test can drive it — main blocks forever on
+// purpose, and a test cannot call something that never returns.
+func register() error {
 	a, err := buildAnchors()
 	if err != nil {
-		panic(err)
+		return err
 	}
 	anchors = a
 	js.Global().Set("xapDemoReceiptHex", js.FuncOf(demoReceiptHex))
 	js.Global().Set("xapVerify", js.FuncOf(verify))
+	return nil
+}
+
+func main() {
+	if err := register(); err != nil {
+		panic(err)
+	}
 	select {} // keep the instance alive so exported funcs stay callable
 }

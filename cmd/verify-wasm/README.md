@@ -18,7 +18,7 @@ revision stamp, so the output is byte-identical regardless of who builds it, fro
 which directory, or at which commit. Expected digest:
 
 ```
-sha256(xap-verify.wasm) = 3de964aeb6cef9e4820b3e08cde0e3444eca735edd7d8cb9c444331a27b1b8fe
+sha256(xap-verify.wasm) = e194d78aa7b9ccffe3d501f516f1b2cc0783679085183c6c1d99a13dac0e7387
 ```
 
 Neither flag strips dependency versions: Go records them in the binary's build
@@ -33,7 +33,8 @@ Digest history, since each entry is a claim someone may want to check:
 | `cfea85d7…d19a6f` | same source against `xap-spec v0.0.0`, Go 1.26.4 |
 | `f1ac6e81…f206e6` | against `xap-spec v0.1.0`, Go 1.26.4 |
 | `0d47ef75…d682e08` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
-| `3de964ae…b1b8fe` | **current** — Go 1.26.6 |
+| `3de964ae…b1b8fe` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |
+| `e194d78a…0e7387` | **current** — Go 1.26.6, anchors declaring roles and the ep anchor's subject |
 
 The move to 1.26.6 was not housekeeping. GO-2026-5972 / CVE-2026-33818 is a
 missing recursion limit in `encoding/asn1`, and this target links it: `go list
@@ -88,10 +89,17 @@ note, because it reads as confirmation.
 So re-measure it against the live URL when it changes, not against the table
 above. The table says what the source produces; only a fetch says what is served.
 
-**A redeploy is outstanding.** The served artifact is the 1.26.5 build; the
-recipe now produces `3de964ae…b1b8fe` at 1.26.6. Until the site is updated, the
-two disagree by design rather than by accident, and the reproducibility claim
-this file makes does not hold. Update this note by measurement once it ships.
+**A redeploy is outstanding.** The served artifact is the 1.26.5 build. Until
+the site is updated, it and this recipe disagree by design rather than by
+accident, and the reproducibility claim this file makes does not hold. Update
+this note by measurement once it ships.
+
+The 1.26.6 build was deployed briefly on 2026-08-15 and rolled back within
+minutes: it panicked in `BuildAnchors` before exporting `xapVerify`, so the page
+loaded and did nothing. Bytes matching the recipe is not the same as a binary
+that runs, and the rollback was decided by running the artifact rather than by
+hashing it. `cmd/verify-wasm` now has host tests that catch that class, and the
+recipe's digest is the build that passes them.
 
 One trap worth naming, because it produces a confident wrong answer:
 `/verify/xap-verify.wasm` also returns 200, but with the site's HTML fallback

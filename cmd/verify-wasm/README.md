@@ -58,7 +58,23 @@ public keys — so the embedded artifact is all that is required to reproduce it
 
 ## Deployment note
 
-The artifact live on `vidimuslabs.com/verify` matches the reproducible build above
-(`sha256 = cfea85d70e5c17107bf12ad1d053c89e210e96658b5e130a9c463be2bad19a6f`,
-deployed 2026-07-17), so the served bytes are byte-identical to a clean rebuild
-from this source. Re-run the recipe and diff the digest to confirm.
+Measured against the live site on 2026-08-15 rather than carried forward. The
+artifact served is:
+
+```
+sha256(https://vidimuslabs.com/xap-verify.wasm) = 0d47ef75321aeddb516d0f3f5aae635a522ad52875f4879abe936fbf2d682e08
+```
+
+This note previously named `cfea85d7…d19a6f`, deployed 2026-07-17 — two
+generations stale. It was not updated when the current artifact was deployed,
+which is precisely the failure this section exists to prevent: a provenance note
+that nobody re-measures is a claim rather than a record, and it is worse than no
+note, because it reads as confirmation.
+
+So re-measure it against the live URL when it changes, not against the table
+above. The table says what the source produces; only a fetch says what is served.
+
+One trap worth naming, because it produces a confident wrong answer:
+`/verify/xap-verify.wasm` also returns 200, but with the site's HTML fallback
+rather than the binary. The asset is served from the root. Hashing the wrong path
+yields a digest that matches nothing and looks like tampering.

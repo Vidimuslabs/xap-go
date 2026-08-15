@@ -1,6 +1,6 @@
 module github.com/Vidimuslabs/xap-go
 
-go 1.26.5
+go 1.26.6
 
 // Local development and CI check xap-spec out as a sibling. Consumers ignore
 // this line — replace directives apply only to the main module — so the require

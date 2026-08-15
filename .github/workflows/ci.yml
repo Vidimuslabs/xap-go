@@ -124,6 +124,36 @@ jobs:
           echo "SDK coverage: ${pct}%"
           awk "BEGIN {exit !(${pct} >= 80.0)}" || (echo "coverage ${pct}% below 80% gate" && exit 1)
 
+      # The wasm verifier, under a real JS host.
+      #
+      # `go test -race ./...` above compiles cmd/verify-wasm and never runs it,
+      # because main() only builds under GOOS=js. On 2026-08-15 that gap put a
+      # binary into production that could not start: its embedded anchors
+      # declared no signer roles, so main() panicked before installing the
+      # exports and the verify page loaded and did nothing. CI was green, the
+      # deploy's 85-file hash comparison was green, and the artifact was
+      # byte-identical to a clean reproducible build. Compiling a command is not
+      # evidence that it starts.
+      #
+      # Two steps because they fail differently. The first runs the package's
+      # tests compiled to wasm, which covers the JS export contract — the seam
+      # where js.Global().Set takes a string, the page calls a string, and
+      # nothing relates the two. The second runs the actual built artifact
+      # through Go's real loader shim, which is what a browser does and the only
+      # thing that would have caught the panic above.
+      - name: verify-wasm — tests under a JS host
+        working-directory: xap-go
+        run: |
+          export PATH="$(go env GOROOT)/lib/wasm:$PATH"
+          GOOS=js GOARCH=wasm go test ./cmd/verify-wasm/
+
+      - name: verify-wasm — the built artifact runs and verifies
+        working-directory: xap-go
+        run: |
+          GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false \
+            -o /tmp/xap-verify.wasm ./cmd/verify-wasm
+          node cmd/verify-wasm/smoke.mjs /tmp/xap-verify.wasm
+
       - name: conformance vectors
         working-directory: xap-go
         run: go run ./cmd/xap vectors run

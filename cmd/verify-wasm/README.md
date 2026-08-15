@@ -7,7 +7,7 @@ reproducible from this source. This note is the recipe.
 
 ## Reproducible build
 
-Toolchain: **Go 1.26.5** (matches the `go` directive in `go.mod`).
+Toolchain: **Go 1.26.6** (matches the `go` directive in `go.mod`).
 
 ```sh
 GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false -o xap-verify.wasm ./cmd/verify-wasm
@@ -18,7 +18,7 @@ revision stamp, so the output is byte-identical regardless of who builds it, fro
 which directory, or at which commit. Expected digest:
 
 ```
-sha256(xap-verify.wasm) = 0d47ef75321aeddb516d0f3f5aae635a522ad52875f4879abe936fbf2d682e08
+sha256(xap-verify.wasm) = 3de964aeb6cef9e4820b3e08cde0e3444eca735edd7d8cb9c444331a27b1b8fe
 ```
 
 Neither flag strips dependency versions: Go records them in the binary's build
@@ -32,12 +32,26 @@ Digest history, since each entry is a claim someone may want to check:
 |---|---|
 | `cfea85d7…d19a6f` | same source against `xap-spec v0.0.0`, Go 1.26.4 |
 | `f1ac6e81…f206e6` | against `xap-spec v0.1.0`, Go 1.26.4 |
-| `0d47ef75…d682e08` | **current** — Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
+| `0d47ef75…d682e08` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
+| `3de964ae…b1b8fe` | **current** — Go 1.26.6 |
 
-The current digest is what vidimuslabs.com serves. Rebuild and redeploy the
-site's copy from this recipe whenever the module graph or toolchain moves,
-otherwise the page invites people to verify a binary that no longer corresponds
-to any published source.
+The move to 1.26.6 was not housekeeping. GO-2026-5972 / CVE-2026-33818 is a
+missing recursion limit in `encoding/asn1`, and this target links it: `go list
+-deps` on `./cmd/verify-wasm` pulls `encoding/asn1`, `crypto/x509` and this
+module's `conformance` package, whose `parseHybridPub` is the reachable trace
+`govulncheck` reported. So the binary built at 1.26.5 parses attacker-supplied
+public keys with an unpatched stack-exhaustion bug, in the visitor's browser. The
+blast radius is a crashed tab rather than anything reaching the host, but a page
+whose entire proposition is *verify it yourself* is a bad place to serve a known
+defect in the parser.
+
+Rebuild and redeploy the site's copy from this recipe whenever the module graph
+or toolchain moves, otherwise the page invites people to verify a binary that no
+longer corresponds to any published source.
+
+The loader shim did not change between 1.26.5 and 1.26.6 — `wasm_exec.js` is
+byte-identical, checked rather than assumed, so a redeploy of the `.wasm` alone
+is sufficient. Do not assume that holds for the next toolchain move.
 
 The JS loader shim is Go's own, copied verbatim:
 
@@ -73,6 +87,11 @@ note, because it reads as confirmation.
 
 So re-measure it against the live URL when it changes, not against the table
 above. The table says what the source produces; only a fetch says what is served.
+
+**A redeploy is outstanding.** The served artifact is the 1.26.5 build; the
+recipe now produces `3de964ae…b1b8fe` at 1.26.6. Until the site is updated, the
+two disagree by design rather than by accident, and the reproducibility claim
+this file makes does not hold. Update this note by measurement once it ships.
 
 One trap worth naming, because it produces a confident wrong answer:
 `/verify/xap-verify.wasm` also returns 200, but with the site's HTML fallback

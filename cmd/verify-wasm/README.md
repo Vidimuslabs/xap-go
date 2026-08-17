@@ -18,10 +18,10 @@ revision stamp, so the output is byte-identical regardless of who builds it, fro
 which directory, or at which commit. Expected digest:
 
 ```
-sha256(xap-verify.wasm) = 4482a4370f5d83bd17922618e02b120946801e7a4c7b80a2b2b2fba5e4be082e
+sha256(xap-verify.wasm) = e32f5f9ec41542f61468a108316f6da49a86180c288994a3009337b4c8865117
 ```
 
-**Production serves a different artifact**, one source generation behind this
+**Production serves a different artifact**, two source generations behind this
 one. That is a real gap rather than bookkeeping — the deployment note below says
 what it is, how it drifted, and what it costs.
 
@@ -51,12 +51,20 @@ Digest history, since each entry is a claim someone may want to check:
 | `0d47ef75…d682e08` | `a3522af` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
 | `3de964ae…b1b8fe` | `76fd083` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |
 | `e194d78a…0e7387` | `189d7cd` | Go 1.26.6, anchors declaring roles and the ep anchor's subject — **the artifact production still serves** |
-| `4482a437…be082e` | `4315460` | **current source; never deployed.** Neither the graph nor the toolchain moved: `main()` was split into `register()` so a host test could drive it, and that changed the binary |
+| `4482a437…be082e` | `4315460` | never deployed. Neither the graph nor the toolchain moved: `main()` was split into `register()` so a host test could drive it, and that changed the binary |
+| `e32f5f9e…865117` | tip | **current source; never deployed.** `register()` now installs the exports by looping over one map instead of two inline `Set` calls, which changed the binary again — caught by the CI digest gate on its first real change rather than by anyone noticing |
 
-Both ends of that last step were rebuilt on 2026-08-17 rather than taken on
-trust: `189d7cd` produces `e194d78a…`, `4315460` produces `4482a437…`, and every
-commit from `4315460` to the tip produces the latter. Each row's commit is
-therefore a reproduction point, not merely a citation.
+The current row reads `tip` rather than a hash on purpose: a source change and the
+digest it produces have to land in the same commit, or CI is red in between, so
+the row cannot cite the commit that created it. **Convention, so this does not rot:
+when a new digest supersedes the current row, fill the outgoing row's cell with
+the hash of the commit that produced it** — which is knowable by then, and is how
+`4315460` got into the row above.
+
+Rows were rebuilt on 2026-08-17 rather than taken on trust: `189d7cd` produces
+`e194d78a…`, `4315460` produces `4482a437…`, and each digest was built twice to
+confirm it is deterministic. Each row's commit is therefore a reproduction point,
+not merely a citation.
 
 The move to 1.26.6 was not housekeeping. GO-2026-5972 / CVE-2026-33818 is a
 missing recursion limit in `encoding/asn1`, and this target links it: `go list
@@ -117,7 +125,7 @@ note, because it reads as confirmation.
 So re-measure it against the live URL when it changes, not against the table
 above. The table says what the source produces; only a fetch says what is served.
 
-**Served as of 2026-08-17, and one source generation behind.** Re-measured that
+**Served as of 2026-08-17, and two source generations behind.** Re-measured that
 day: the live artifact is still `e194d78a…`, which is byte-identical to a clean
 build at `189d7cd` — verified by rebuilding at that commit, not by reading the
 table above — and it was checked by running it as well as hashing it: the demo

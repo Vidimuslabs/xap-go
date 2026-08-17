@@ -29,14 +29,52 @@ func registerForTest(t *testing.T) {
 	}
 }
 
+// pageContract is what vidimus-labs-site actually calls, written out here as
+// literals rather than read from main.go's `exports` map.
+//
+// That distinction is the whole point. A test that asks the code which names it
+// registers and then checks it registered them agrees by construction — it passes
+// for any pair of names, including a renamed pair, which is exactly the case that
+// leaves a working build serving a dead button. These literals are this
+// repository's copy of the page's side of the contract, so a rename in main.go
+// fails here instead of shipping.
+//
+// What it still cannot catch, stated because the gap is real: a rename applied to
+// main.go and to this list together. Nothing inside xap-go can — the caller is in
+// another repository and cannot be edited in the same commit. That is what
+// scripts/verify-page.mjs in vidimus-labs-site is for, driving the served page in
+// a browser.
+var pageContract = []string{"xapDemoReceiptHex", "xapVerify"}
+
 // The page calls these by name. If one is missing the wasm still loads, still
 // reports no error, and the button does nothing.
 func TestRegisterInstallsEveryExport(t *testing.T) {
 	registerForTest(t)
-	for _, name := range exportNames {
+	for _, name := range pageContract {
 		v := js.Global().Get(name)
 		if v.Type() != js.TypeFunction {
 			t.Errorf("global %q is %s, want a function — the page calls this name", name, v.Type())
+		}
+	}
+}
+
+// The code must export the page's contract and nothing more. Compared as sets in
+// both directions, because the two failures differ: an export the page does not
+// call is dead weight that reads as supported surface, and a name the page calls
+// that the code does not export is a dead button.
+func TestExportSetMatchesThePageContract(t *testing.T) {
+	inContract := make(map[string]bool, len(pageContract))
+	for _, name := range pageContract {
+		inContract[name] = true
+	}
+	for name := range exports {
+		if !inContract[name] {
+			t.Errorf("the code exports %q, which the page contract does not list", name)
+		}
+	}
+	for _, name := range pageContract {
+		if _, ok := exports[name]; !ok {
+			t.Errorf("the page contract lists %q, which the code does not export", name)
 		}
 	}
 }

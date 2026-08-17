@@ -35,11 +35,22 @@ func verify(_ js.Value, args []js.Value) any {
 	return map[string]any{"valid": true, "message": "Hybrid signature verified: ECDSA P-384 + ML-DSA-65 (both halves)."}
 }
 
-// exportNames are the globals the page calls. Named here rather than written
-// inline at the Set calls so a test can assert the page's contract by the same
-// list the code registers from: a rename that misses one is otherwise a working
-// build and a dead button.
-var exportNames = []string{"xapDemoReceiptHex", "xapVerify"}
+// exports are the globals the page calls, keyed by the exact names it calls them
+// by. register loops over this map, so each name is written once in the code.
+//
+// The previous arrangement wrote the names inline at the Set calls and kept a
+// second list beside them, with a comment claiming a test could assert the
+// contract "by the same list the code registers from" — which it could not,
+// because registration did not read that list.
+//
+// The test deliberately does NOT read this map to decide what to look for. It
+// carries its own literals, since a test that asks the code what it exports and
+// then checks that it exports it agrees by construction and passes for any pair
+// of names, renamed included. See exports_js_test.go.
+var exports = map[string]func(js.Value, []js.Value) any{
+	"xapDemoReceiptHex": demoReceiptHex,
+	"xapVerify":         verify,
+}
 
 // register builds the anchor set and installs the exported functions on the JS
 // global. Separated from main so a test can drive it — main blocks forever on
@@ -50,8 +61,9 @@ func register() error {
 		return err
 	}
 	anchors = a
-	js.Global().Set("xapDemoReceiptHex", js.FuncOf(demoReceiptHex))
-	js.Global().Set("xapVerify", js.FuncOf(verify))
+	for name, fn := range exports {
+		js.Global().Set(name, js.FuncOf(fn))
+	}
 	return nil
 }
 

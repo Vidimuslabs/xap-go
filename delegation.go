@@ -227,15 +227,25 @@ func patternCovered(r string, parents []string) bool {
 // hasTraversal reports whether s contains a ".." path segment, on either
 // separator. Matching whole segments rather than the substring ".." keeps
 // legitimate names such as "svc/my..app" usable.
+//
+// The separators are normalised before splitting. Splitting on one separator
+// at a time hid mixed-separator segments from both passes — "db/..\x" splits
+// as ["db", "..\x"] on "/" and ["db/..", "x"] on "\", so neither sees a bare
+// ".." — and on consumers that treat both as separators (every Windows path
+// consumer) that string escapes its prefix. Found by the self-signed
+// adversarial round: it passed both an enumerated "db/*" scope and an
+// unconstrained one, which is the exact escape the predicate exists to close.
 func hasTraversal(s string) bool {
-	for _, sep := range []string{"/", "\\"} {
-		for _, seg := range strings.Split(s, sep) {
-			if seg == ".." {
-				return true
-			}
+	normalised := strings.ReplaceAll(s, "\\", "/")
+	if normalised == ".." {
+		return true
+	}
+	for _, seg := range strings.Split(normalised, "/") {
+		if seg == ".." {
+			return true
 		}
 	}
-	return s == ".."
+	return false
 }
 
 // boundaryWithin checks child boundary ≤ parent boundary (invariant ii): every

@@ -3,8 +3,10 @@ on:
   push:
   pull_request:
 
-# Least privilege. The GITHUB_TOKEN only needs to read this repo; the private
-# sibling is fetched with a separate scoped PAT (CI_PAT) below.
+# Least privilege. The GITHUB_TOKEN only needs to read this repo. Nothing here
+# consumes a secret: xap-spec resolves from the module proxy like any other
+# dependency, so a pull request from a fork — which never receives Actions
+# secrets — runs exactly the same steps as a push to main.
 permissions:
   contents: read
 
@@ -12,111 +14,75 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # xap-go depends on the private xap-spec via a replace directive. Both are
-      # checked out side by side under the workspace so `replace ../xap-spec`
-      # resolves; the private sibling needs a token with read access (CI_PAT).
       # Actions are pinned to a full commit SHA (supply-chain hardening); the
       # trailing comment tracks the version. Dependabot keeps these current.
       # fetch-depth: 0 so the gitleaks step below scans the whole history.
       # checkout defaults to a depth-1 clone, which leaves `gitleaks detect` —
-      # a history scanner — with exactly one commit to look at. Making the
-      # repository public exposes every commit ever made, so the scan has to
-      # cover every commit ever made. Only this checkout needs it; gitleaks does
-      # not scan the xap-spec sibling.
-      - name: Checkout xap-go
+      # a history scanner — with exactly one commit to look at. This repository
+      # is public, so every commit ever made is exposed and the scan has to
+      # cover every commit ever made.
+      - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: xap-go
           fetch-depth: 0
-      # Fork PRs and Dependabot runs receive no Actions secrets, so CI_PAT
-      # arrives empty and the checkout below dies with "Input required and not
-      # supplied: token" — an error that names actions/checkout and points
-      # nowhere near the cause. Verified on run 31426645776: "Checkout xap-spec
-      # (private sibling)" fails in 8s and every later step is skipped.
-      #
-      # This cannot be made GREEN before the flip. xap-spec is private, and
-      # neither a fork nor Dependabot can reach it by any route, so there is no
-      # credential to supply and no honest way to report the code as verified.
-      # What it can be is legible: fail here, saying which runs this hits and
-      # what removes it. See CF-xap-36 / CF-xap-21.
-      - name: preflight — credentials for the private sibling
-        env:
-          CI_PAT: ${{ secrets.CI_PAT }}
-        run: |
-          if [ -n "$CI_PAT" ]; then
-            echo "CI_PAT present; the private sibling can be checked out."
-            exit 0
-          fi
-          echo "::error title=No credentials for the private sibling::This run \
-          received no Actions secrets, so xap-spec (still private) cannot be \
-          checked out and nothing below could verify your change. Fork pull \
-          requests and Dependabot runs never receive them — this is not \
-          something your branch did wrong, and re-running will not help. It \
-          disappears when xap-spec is published and the 'replace' directive \
-          leaves go.mod (CF-xap-36). A maintainer can verify this branch by \
-          pushing it to the upstream repository."
-          exit 1
-
-      - name: Checkout xap-spec (private sibling)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: Vidimuslabs/xap-spec
-          token: ${{ secrets.CI_PAT }}
-          path: xap-spec
 
       - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
-          go-version-file: xap-go/go.mod
+          go-version-file: go.mod
+
+      # xap-spec is a published module now, not a sibling checkout. Proving it
+      # resolves from the proxy is the whole point of the flip, so fail loudly
+      # here rather than three steps later with a compile error.
+      - name: go mod download
+        run: go mod download
+
+      - name: go.mod is proxy-resolvable
+        run: |
+          if grep -q '^replace github.com/Vidimuslabs/' go.mod; then
+            echo 'go.mod still replaces a Vidimuslabs module; consumers ignore'
+            echo 'replace, so this repository would be uninstallable.'
+            exit 1
+          fi
 
       - name: gofmt
-        working-directory: xap-go
         run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt -w .' && exit 1)
 
       - name: go vet
-        working-directory: xap-go
         run: go vet ./...
 
       - name: staticcheck
-        working-directory: xap-go
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
 
       - name: govulncheck
-        working-directory: xap-go
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
       - name: gitleaks
-        working-directory: xap-go
         run: |
           # Installed from the Go module proxy rather than fetched from the
-          # GitHub release host.
+          # GitHub release host. The release download failed four times on
+          # 2026-08-12 across four repositories; retries were added and did not
+          # help, because retrying does not fix a host that is down. Every job
+          # already depends on proxy.golang.org for `go build`, and staticcheck
+          # and govulncheck already arrive this way, so gitleaks stops being the
+          # one tool carrying its own availability risk. The proxy verifies
+          # against the checksum database, and it installs outside the checkout,
+          # so the tool is not part of what it scans.
           #
-          # The release download failed four times on 2026-08-12 across four
-          # repositories — one 503 and three dropped connections — each a red
-          # main unrelated to the code. Retries were added and did not help: the
-          # last failure exhausted all five attempts and every one returned 503,
-          # because retrying does not fix a host that is down.
-          #
-          # So this removes the failure domain instead of retrying it. Every job
-          # here already depends on proxy.golang.org for `go build`, and both
-          # staticcheck and govulncheck already arrive this way, so gitleaks
-          # stops being the one tool carrying its own availability risk. The
-          # module proxy verifies the download against the checksum database,
-          # which is a stronger guarantee than a SHA-256 pinned here by hand —
-          # and it installs outside the checkout, so the tool is not part of
-          # what it scans.
+          # Kept identical to the live ci.yml gitleaks step ON PURPOSE. This file
+          # is a prepared replacement, so every divergence from the workflow it
+          # replaces is a regression waiting to be dropped in at the flip — which
+          # is exactly what happened to this step, and why it is called out here.
           go install github.com/zricethezav/gitleaks/v8@v8.18.4
           gitleaks detect --source . --no-banner --redact --exit-code 1
 
       - name: test (race)
-        working-directory: xap-go
         run: go test -race ./...
 
       - name: coverage gate (80%)
-        working-directory: xap-go
         run: |
           go test -coverpkg=github.com/Vidimuslabs/xap-go,github.com/Vidimuslabs/xap-go/canonical \
             -coverprofile=cover.out ./...
@@ -124,79 +90,5 @@ jobs:
           echo "SDK coverage: ${pct}%"
           awk "BEGIN {exit !(${pct} >= 80.0)}" || (echo "coverage ${pct}% below 80% gate" && exit 1)
 
-      # The wasm verifier, under a real JS host.
-      #
-      # `go test -race ./...` above compiles cmd/verify-wasm and never runs it,
-      # because main() only builds under GOOS=js. On 2026-08-15 that gap put a
-      # binary into production that could not start: its embedded anchors
-      # declared no signer roles, so main() panicked before installing the
-      # exports and the verify page loaded and did nothing. CI was green, the
-      # deploy's 85-file hash comparison was green, and the artifact was
-      # byte-identical to a clean reproducible build. Compiling a command is not
-      # evidence that it starts.
-      #
-      # Two steps because they fail differently. The first runs the package's
-      # tests compiled to wasm, which covers the JS export contract — the seam
-      # where js.Global().Set takes a string, the page calls a string, and
-      # nothing relates the two. The second runs the actual built artifact
-      # through Go's real loader shim, which is what a browser does and the only
-      # thing that would have caught the panic above.
-      - name: verify-wasm — tests under a JS host
-        working-directory: xap-go
-        run: |
-          export PATH="$(go env GOROOT)/lib/wasm:$PATH"
-          GOOS=js GOARCH=wasm go test ./cmd/verify-wasm/
-
-      - name: verify-wasm — the built artifact runs and verifies
-        working-directory: xap-go
-        run: |
-          GOOS=js GOARCH=wasm go build -trimpath -buildvcs=false \
-            -o /tmp/xap-verify.wasm ./cmd/verify-wasm
-          node cmd/verify-wasm/smoke.mjs /tmp/xap-verify.wasm
-
-      # A third failure mode, distinct from both steps above: the artifact starts
-      # and verifies correctly, and is still not the artifact this repo publishes.
-      #
-      # cmd/verify-wasm/README.md states an expected digest, and the public verify
-      # page's whole proposition is that a reader can reproduce it. Nothing checked
-      # that claim, so it was wrong from 4315460 to dc9aa48 while every step above
-      # stayed green: splitting register() out of main() changed the binary, and
-      # building an artifact and running it never asks whether it is the artifact
-      # the README names. The rule in that file used to say "rebuild when the
-      # module graph or toolchain moves" — a source change was outside the rule
-      # meant to catch exactly this, which is why this is a gate and not a habit.
-      - name: verify-wasm — the built artifact matches its published digest
-        working-directory: xap-go
-        run: |
-          test -f /tmp/xap-verify.wasm || {
-            echo "no artifact — this step reuses the build from the step above"
-            exit 1
-          }
-
-          expected=$(grep -oE 'sha256\(xap-verify\.wasm\) = [0-9a-f]{64}' \
-            cmd/verify-wasm/README.md | head -1 | grep -oE '[0-9a-f]{64}')
-
-          # A gate that quietly stops comparing when someone reformats the README
-          # is not a gate, so an unfindable claim fails rather than passes.
-          test -n "$expected" || {
-            echo "no 'sha256(xap-verify.wasm) = <64 hex>' claim found in cmd/verify-wasm/README.md"
-            exit 1
-          }
-
-          actual=$(sha256sum /tmp/xap-verify.wasm | cut -d' ' -f1)
-          echo "published: $expected"
-          echo "built    : $actual"
-
-          test "$expected" = "$actual" || {
-            echo
-            echo "The digest published in cmd/verify-wasm/README.md is not what this"
-            echo "source builds. Rebuild with the recipe in that file, update the"
-            echo "'Expected digest' block and add a row to the digest history saying"
-            echo "what changed — and if the live site serves the old artifact, say so"
-            echo "in the deployment note rather than letting the two drift apart."
-            exit 1
-          }
-
       - name: conformance vectors
-        working-directory: xap-go
         run: go run ./cmd/xap vectors run

@@ -139,9 +139,18 @@ which is the same shape as the failure this file was written to prevent, one lev
 further out.
 
 Redeploying is a production action and Papa's to trigger: `npm run ship` from
-`vidimus-labs-site`, then re-measure the live URL and update this note. Until
-then the honest reading is the one above — what is served corresponds to
-`189d7cd`, not to the tip.
+`vidimus-labs-site`, then re-measure the live URL and update this note. One
+command does the measurement and the behavioural check together, and fails if
+either is wrong:
+
+```sh
+node cmd/verify-wasm/smoke.mjs https://vidimuslabs.com/xap-verify.wasm \
+  --expect <the Expected digest above>
+```
+
+Until then the honest reading is the one above — what is served corresponds to
+`189d7cd`, not to the tip, and that command exits 1 today saying exactly which
+two digests disagree.
 
 That distinction is not pedantry — it is what this deploy cost. An earlier 1.26.6
 build (`3de964ae…b1b8fe`) went out the same day, matched its recipe digest

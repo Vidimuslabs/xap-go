@@ -21,9 +21,8 @@ which directory, or at which commit. Expected digest:
 sha256(xap-verify.wasm) = e32f5f9ec41542f61468a108316f6da49a86180c288994a3009337b4c8865117
 ```
 
-**Production serves a different artifact**, two source generations behind this
-one. That is a real gap rather than bookkeeping — the deployment note below says
-what it is, how it drifted, and what it costs.
+This is also what production serves, as of 2026-08-17 — measured, not assumed.
+See the deployment note.
 
 Neither flag strips dependency versions: Go records them in the binary's build
 info, so the digest is a function of the resolved module graph and the toolchain
@@ -50,9 +49,9 @@ Digest history, since each entry is a claim someone may want to check:
 | `f1ac6e81…f206e6` | `410adb6` | Go 1.26.4, after the embedded receipt changed; `require` moved to `xap-spec v0.1.0` |
 | `0d47ef75…d682e08` | `a3522af` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
 | `3de964ae…b1b8fe` | `76fd083` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |
-| `e194d78a…0e7387` | `189d7cd` | Go 1.26.6, anchors declaring roles and the ep anchor's subject — **the artifact production still serves** |
+| `e194d78a…0e7387` | `189d7cd` | Go 1.26.6, anchors declaring roles and the ep anchor's subject. Deployed 2026-08-15; served until 2026-08-17, two days of which it was no longer what the tip built |
 | `4482a437…be082e` | `4315460` | never deployed. Neither the graph nor the toolchain moved: `main()` was split into `register()` so a host test could drive it, and that changed the binary |
-| `e32f5f9e…865117` | tip | **current source; never deployed.** `register()` now installs the exports by looping over one map instead of two inline `Set` calls, which changed the binary again — caught by the CI digest gate on its first real change rather than by anyone noticing |
+| `e32f5f9e…865117` | tip | **current, and deployed 2026-08-17.** `register()` now installs the exports by looping over one map instead of two inline `Set` calls, which changed the binary again — caught by the CI digest gate on its first real change rather than by anyone noticing |
 
 The current row reads `tip` rather than a hash on purpose: a source change and the
 digest it produces have to land in the same commit, or CI is red in between, so
@@ -113,7 +112,7 @@ Measured against the live site on 2026-08-17 rather than carried forward. The
 artifact served is:
 
 ```
-sha256(https://vidimuslabs.com/xap-verify.wasm) = e194d78aa7b9ccffe3d501f516f1b2cc0783679085183c6c1d99a13dac0e7387
+sha256(https://vidimuslabs.com/xap-verify.wasm) = e32f5f9ec41542f61468a108316f6da49a86180c288994a3009337b4c8865117
 ```
 
 This note previously named `cfea85d7…d19a6f`, deployed 2026-07-17 — two
@@ -125,40 +124,37 @@ note, because it reads as confirmation.
 So re-measure it against the live URL when it changes, not against the table
 above. The table says what the source produces; only a fetch says what is served.
 
-**Served as of 2026-08-17, and two source generations behind.** Re-measured that
-day: the live artifact is still `e194d78a…`, which is byte-identical to a clean
-build at `189d7cd` — verified by rebuilding at that commit, not by reading the
-table above — and it was checked by running it as well as hashing it: the demo
-receipt returns `valid: true` and a receipt with one byte flipped returns
-`valid: false`. So the deployed binary is sound and reproducible. It is simply no
-longer what this module's tip produces, and the "Expected digest" above is the
-tip's output, not the deployment's.
+**Served and in step with source as of 2026-08-17.** The live artifact equals the
+"Expected digest" above, measured by fetching it rather than inferred from a green
+deploy, and checked by running it as well as hashing it: the demo receipt returns
+`valid: true`, a receipt with one byte flipped returns `valid: false`, and the
+served page itself was driven through verify → tamper → restore in a real browser.
 
-**How it drifted, since the mechanism matters more than the fact.** `4315460`
-split `main()` into `register()` so a host test could reach it. That was the right
-change — it is part of the three-layer check this file describes — but it changed
-the binary, and the rule above named only the module graph and the toolchain, so
-nothing flagged it. The three commits after it added a `_test.go`, a `.mjs`
-harness and a CI step that builds the wasm and runs it; **none of them compares
-the built digest to the one published here**, so CI was green across the entire
-divergence. The gap closed on 2026-08-15 was "nothing runs the artifact." The gap
-still open is "nothing checks the artifact against its own published digest" —
-which is the same shape as the failure this file was written to prevent, one level
-further out.
-
-Redeploying is a production action and Papa's to trigger: `npm run ship` from
-`vidimus-labs-site`, then re-measure the live URL and update this note. One
-command does the measurement and the behavioural check together, and fails if
-either is wrong:
+One command re-establishes all of that, and fails if either half is wrong:
 
 ```sh
 node cmd/verify-wasm/smoke.mjs https://vidimuslabs.com/xap-verify.wasm \
   --expect <the Expected digest above>
 ```
 
-Until then the honest reading is the one above — what is served corresponds to
-`189d7cd`, not to the tip, and that command exits 1 today saying exactly which
-two digests disagree.
+**It was out of step for two days, and the mechanism matters more than the fact.**
+`4315460` split `main()` into `register()` so a host test could reach it. That was
+the right change — it is part of the three-layer check this file describes — but it
+changed the binary, and the rule above named only the module graph and the
+toolchain, so nothing flagged it. Production went on serving `e194d78a` while the
+tip built something else. Nothing was broken for a visitor: `e194d78a` is sound
+and reproducible at `189d7cd`. What was broken was this file's claim, and a reader
+following the recipe had no way to distinguish that from tampering.
+
+**The part worth not repeating.** The three commits after `4315460` added a
+`_test.go`, a `.mjs` harness and a CI step that builds the wasm *and runs it*, and
+CI was green across the whole divergence, because none of them compared the built
+artifact to the digest published here. The gap closed on 2026-08-15 was "nothing
+runs the artifact." The gap that stayed open was "nothing checks the artifact
+against its own published digest" — the same shape as the failure this file exists
+to prevent, one level out. Both are now gated: CI fails when the build stops
+matching this file, and `smoke.mjs --expect` is the same question asked of a
+deployed URL, which is the side CI cannot see.
 
 That distinction is not pedantry — it is what this deploy cost. An earlier 1.26.6
 build (`3de964ae…b1b8fe`) went out the same day, matched its recipe digest

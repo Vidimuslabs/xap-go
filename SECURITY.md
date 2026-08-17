@@ -101,6 +101,17 @@ are not published and are not in scope.
 Also out of scope: volumetric denial of service, social engineering of Vidimus
 Labs staff or contractors, and physical attacks.
 
+**Resource exhaustion — where the line sits, because the two sides of it look
+alike.** A single input that makes a parse, decode or verify path allocate without
+bound, recurse without bound, or hang **is in scope**, and the "crash it" invitation
+above is exactly that ask: one envelope that costs this SDK unbounded work is a
+defect and we want to fix it. Sending enough well-formed traffic to exhaust a
+server **is not** — availability under load is a property of how a deployment is
+provisioned, and no bound inside a process answers a distributed source. This SDK
+runs no server of its own; the enforcement node's in-process bounds, and what they
+deliberately do not cover, are documented for operators alongside the server
+distribution.
+
 ## Recognition
 
 Reporters who wish to be credited are acknowledged by name in the release notes

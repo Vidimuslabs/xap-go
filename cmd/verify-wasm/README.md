@@ -23,18 +23,30 @@ sha256(xap-verify.wasm) = e194d78aa7b9ccffe3d501f516f1b2cc0783679085183c6c1d99a1
 
 Neither flag strips dependency versions: Go records them in the binary's build
 info, so the digest is a function of the resolved module graph and the toolchain
-as well as the source. Bumping a `require` changes it, and so does bumping the
-`go` directive.
+as well as the source. Bumping a `require` changes it, so does bumping the `go`
+directive, and so does editing this command's own source.
+
+One caveat governs every row below, and it is the reason the rows are keyed the
+way they are. `go.mod` has carried `replace github.com/Vidimuslabs/xap-spec =>
+../xap-spec` since this module's first commit, so **no build in this history ever
+resolved `xap-spec` from the module proxy** — the `require` line was overridden
+by whatever the sibling checkout held at build time, and that state is recorded
+nowhere. Naming a row by its `xap-spec` version would therefore invite someone to
+reproduce it against a published version and get a different digest, so each row
+names the xap-go commit that recorded it instead: from there `go.mod`, the `go`
+directive and this command's source are all recoverable. The caveat disappears
+when the `replace` drops at publication (CF-xap-36), and the digest changes when
+it does.
 
 Digest history, since each entry is a claim someone may want to check:
 
-| digest | what it was |
-|---|---|
-| `cfea85d7…d19a6f` | same source against `xap-spec v0.0.0`, Go 1.26.4 |
-| `f1ac6e81…f206e6` | against `xap-spec v0.1.0`, Go 1.26.4 |
-| `0d47ef75…d682e08` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
-| `3de964ae…b1b8fe` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |
-| `e194d78a…0e7387` | **current** — Go 1.26.6, anchors declaring roles and the ep anchor's subject |
+| digest | recorded at | what it was |
+|---|---|---|
+| `cfea85d7…d19a6f` | `a3937c9` | first recorded digest, Go 1.26.4. `require` named `xap-spec v0.0.0` — a version that has never existed in `xap-spec`, which built only because the `replace` overrode it and which made the module uninstallable (CF-xap-19, fixed in `f689ec4`) |
+| `f1ac6e81…f206e6` | `410adb6` | Go 1.26.4, after the embedded receipt changed; `require` moved to `xap-spec v0.1.0` |
+| `0d47ef75…d682e08` | `a3522af` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
+| `3de964ae…b1b8fe` | `76fd083` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |
+| `e194d78a…0e7387` | `189d7cd` | **current** — Go 1.26.6, anchors declaring roles and the ep anchor's subject |
 
 The move to 1.26.6 was not housekeeping. GO-2026-5972 / CVE-2026-33818 is a
 missing recursion limit in `encoding/asn1`, and this target links it: `go list

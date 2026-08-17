@@ -86,9 +86,13 @@ cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" wasm_exec.js
 
 ## Embedded receipt and trust anchors
 
-`main.go` embeds a real hybrid-signed (ECDSA-P384 + ML-DSA-65) permit receipt and
-its issuer/enforcement-point trust anchors, produced by the enforcement engine and
-checked in as source so the demo is fully self-contained.
+`anchors.go` embeds a real hybrid-signed (ECDSA-P384 + ML-DSA-65) permit receipt
+and its issuer/enforcement-point trust anchors, produced by the enforcement engine
+and checked in as source so the demo is fully self-contained. They sit there
+rather than in `main.go` — moved in `711957f` — because `main.go` carries
+`//go:build js && wasm` and a file only `GOOS=js` compiles is a file no ordinary
+`go test ./...` can reach. That is the whole reason the missing signer roles
+reached production: nothing host-side could see them.
 
 The anchors are **demo keys**, not the production Vidimus trust root — correct for
 a public demonstration. The receipt is genuinely hybrid-signed; only the signing

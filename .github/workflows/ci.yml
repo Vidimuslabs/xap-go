@@ -154,6 +154,49 @@ jobs:
             -o /tmp/xap-verify.wasm ./cmd/verify-wasm
           node cmd/verify-wasm/smoke.mjs /tmp/xap-verify.wasm
 
+      # A third failure mode, distinct from both steps above: the artifact starts
+      # and verifies correctly, and is still not the artifact this repo publishes.
+      #
+      # cmd/verify-wasm/README.md states an expected digest, and the public verify
+      # page's whole proposition is that a reader can reproduce it. Nothing checked
+      # that claim, so it was wrong from 4315460 to dc9aa48 while every step above
+      # stayed green: splitting register() out of main() changed the binary, and
+      # building an artifact and running it never asks whether it is the artifact
+      # the README names. The rule in that file used to say "rebuild when the
+      # module graph or toolchain moves" — a source change was outside the rule
+      # meant to catch exactly this, which is why this is a gate and not a habit.
+      - name: verify-wasm — the built artifact matches its published digest
+        working-directory: xap-go
+        run: |
+          test -f /tmp/xap-verify.wasm || {
+            echo "no artifact — this step reuses the build from the step above"
+            exit 1
+          }
+
+          expected=$(grep -oE 'sha256\(xap-verify\.wasm\) = [0-9a-f]{64}' \
+            cmd/verify-wasm/README.md | head -1 | grep -oE '[0-9a-f]{64}')
+
+          # A gate that quietly stops comparing when someone reformats the README
+          # is not a gate, so an unfindable claim fails rather than passes.
+          test -n "$expected" || {
+            echo "no 'sha256(xap-verify.wasm) = <64 hex>' claim found in cmd/verify-wasm/README.md"
+            exit 1
+          }
+
+          actual=$(sha256sum /tmp/xap-verify.wasm | cut -d' ' -f1)
+          echo "published: $expected"
+          echo "built    : $actual"
+
+          test "$expected" = "$actual" || {
+            echo
+            echo "The digest published in cmd/verify-wasm/README.md is not what this"
+            echo "source builds. Rebuild with the recipe in that file, update the"
+            echo "'Expected digest' block and add a row to the digest history saying"
+            echo "what changed — and if the live site serves the old artifact, say so"
+            echo "in the deployment note rather than letting the two drift apart."
+            exit 1
+          }
+
       - name: conformance vectors
         working-directory: xap-go
         run: go run ./cmd/xap vectors run

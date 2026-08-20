@@ -39,7 +39,7 @@ var (
 // six distinct ways to fail, and pinning one of them looks identical, from the
 // outside, to pinning all six. A named path makes coverage of this surface
 // measurable the way the verifier's named checks made coverage of that one
-// measurable (CF-xap-43).
+// measurable.
 const (
 	FaultScopeUnconstrainedEscalation = "scope.unconstrained_escalation"
 	FaultScopeActionsUnstated         = "scope.actions_unstated"

@@ -38,14 +38,13 @@ nowhere. Naming a row by its `xap-spec` version would therefore invite someone t
 reproduce it against a published version and get a different digest, so each row
 names an xap-go commit it can be rebuilt from instead: from there `go.mod`, the
 `go` directive and this command's source are all recoverable. The caveat disappears
-when the `replace` drops at publication (CF-xap-36), and the digest changes when
-it does.
+when the `replace` drops at public release, and the digest changes when it does.
 
 Digest history, since each entry is a claim someone may want to check:
 
 | digest | rebuild from | what it was |
 |---|---|---|
-| `cfea85d7…d19a6f` | `a3937c9` | first recorded digest, Go 1.26.4. `require` named `xap-spec v0.0.0` — a version that has never existed in `xap-spec`, which built only because the `replace` overrode it and which made the module uninstallable (CF-xap-19, fixed in `f689ec4`) |
+| `cfea85d7…d19a6f` | `a3937c9` | first recorded digest, Go 1.26.4. `require` named `xap-spec v0.0.0` — a version that has never existed in `xap-spec`, which built only because the `replace` overrode it and which made the module uninstallable (fixed in `f689ec4`) |
 | `f1ac6e81…f206e6` | `410adb6` | Go 1.26.4, after the embedded receipt changed; `require` moved to `xap-spec v0.1.0` |
 | `0d47ef75…d682e08` | `a3522af` | Go 1.26.5, `x/sys` v0.44.0, and the trust-anchor validation added in `cose.go` |
 | `3de964ae…b1b8fe` | `76fd083` | Go 1.26.6 — **never deployed; panics on startup.** Built before the anchors declared their signer roles, so `main` died in `BuildAnchors` before exporting anything |

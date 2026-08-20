@@ -9,7 +9,7 @@ package xap_test
 // is indistinguishable from a passed one: Valid answers "was anything refuted",
 // so nothing refuted by a check that never ran still reads as valid.
 //
-// Found in the commitment block (CF-xap-54) and then measured across the rest:
+// Found in the commitment block and then measured across the rest:
 // a bare receipt emitted 11 of 35 checks and said nothing about the other 24.
 //
 // The test below is differential rather than a list of expected statuses,

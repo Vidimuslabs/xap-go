@@ -1,9 +1,7 @@
 package xap_test
 
 // Timeout receipt semantics (¶0052; SPEC.md §5). Decided 2026-08-10 while
-// fixing the code registry, flagged as a protocol ruling made without Papa,
-// and RATIFIED BY PAPA 2026-08-13. The header previously read "ratified
-// 2026-08-10", which claimed an approval that had not happened yet.
+// fixing the code registry; ratified 2026-08-13.
 //
 // A timeout receipt records elapsed_ms EQUAL to max_ms, never greater.
 // Evaluation is abandoned at the bound, so the bound is reached and not

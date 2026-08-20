@@ -210,9 +210,9 @@ func TestChainLinkTracksPayloadNotEnvelope(t *testing.T) {
 	}
 }
 
-// The chain-link definition is a ratified protocol decision (CF-xap-44, ruled
-// by Papa 2026-08-12), so it is locked here rather than left to inference from
-// the malleability tests above. Those show the link survives envelope rewrites;
+// The chain-link definition is a ratified protocol decision (2026-08-12), so it
+// is locked here rather than left to inference from the malleability tests
+// above. Those show the link survives envelope rewrites;
 // this states what the link IS, and fails if it ever regresses to hashing
 // envelope bytes.
 //

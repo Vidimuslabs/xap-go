@@ -604,7 +604,7 @@ func namedCheck(res xap.VerificationResult, name string) (xap.Check, bool) {
 // for the receipt-verification surface, and for the same measured reason: with
 // only the four invariant sentinels to aim at, six delegation strictness paths
 // could be deleted from the SDK while the corpus and the completeness gate both
-// stayed green (CF-xap-43).
+// stayed green.
 //
 // chain.empty is deliberately absent: a vector expressing it would carry no
 // mat_files, which the runner rejects before ValidateChain ever sees it.

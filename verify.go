@@ -776,9 +776,9 @@ func (v *Verifier) Verify(in VerifyInput) VerificationResult {
 	// a missing check is indistinguishable from a passed one in a result whose
 	// Valid field answers only "was anything refuted".
 	//
-	// This is the CF-xap-54 defect generalised. That one was found in the
-	// commitment block and fixed by hand; measuring afterwards showed the same
-	// shape in seven more guards, so the fix here is structural rather than
+	// This generalises a defect first found in the commitment block and fixed
+	// by hand; measuring afterwards showed the same shape in seven more guards,
+	// so the fix here is structural rather than
 	// another round of hand-patching. A check listed below that no branch above
 	// emitted is reported as not performed, naming the input that was missing —
 	// and a guard added later inherits the property without anyone remembering

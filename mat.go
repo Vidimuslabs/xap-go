@@ -101,7 +101,7 @@ func (m *MAT) ValidateStructure() error {
 	if m.Replay.InstanceID == "" {
 		return fmt.Errorf("MAT %s carries no instance id", m.ID)
 	}
-	// CF-xap-48. MAT.ID and replay.instance_id both describe themselves as the
+	// MAT.ID and replay.instance_id both describe themselves as the
 	// artifact instance identifier — ID as "¶0084 Authority Identifier / field
 	// 138 instance ID", and field 138 as carrying an "instance id" of its own.
 	// Two fields with one description is not a redundancy a verifier can ignore:

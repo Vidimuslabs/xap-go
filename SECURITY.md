@@ -11,10 +11,25 @@ scrutiny says it is worth, so we would rather you find a flaw than take our word
 for it. Engineers, cryptographers, and academic researchers are explicitly
 invited to attack this SDK.
 
-The conformance vectors and their expected-outcome manifest ship in
-[xap-spec](https://github.com/Vidimuslabs/xap-spec), so the target is
-self-service — `xap vectors run` replays every one against this verifier.
-Concretely, we would like to know if you can:
+### How to run the target
+
+You need **both** public-tier repos. Conformance vectors and the expected-outcome
+manifest live in [xap-spec](https://github.com/Vidimuslabs/xap-spec); this repo is
+the verifier that consumes them.
+
+```sh
+# from a checkout of this repo, with xap-spec available per go.mod
+go test ./...
+go run ./cmd/xap vectors run
+# optional continuous fuzz (seeds replay under go test; this explores further)
+go test -fuzz=FuzzParseReceipt -fuzztime=60s .
+```
+
+Build the WASM verifier locally from `cmd/verify-wasm/` (see that directory's
+README). Do **not** probe the live page at `vidimuslabs.com/verify` — that host is
+out of scope below.
+
+### What we want broken
 
 - **forge** — produce any byte string this verifier accepts as valid for an
   action that was never authorized;
@@ -27,12 +42,34 @@ Concretely, we would like to know if you can:
 - **bypass a commitment binding** — get an action outside a commitment's declared
   set to verify;
 - **crash it** — make any parse or verify entry point panic, hang, or consume
-  unbounded resources on attacker-controlled input.
+  unbounded resources on attacker-controlled input;
+- **lie with a valid signature** — mint correctly signed artifacts under a key
+  the verifier is configured to trust, and still get a false accept (semantic
+  hostility beats byte-flipping a sealed envelope).
 
-What we already test is in `adversarial_test.go`, `fuzz_test.go`,
-`hybrid_test.go`, and `canonical/canonical_test.go`. Reading those first will
-tell you where the unexplored surface is; we would rather point you at it than
-have you spend effort re-deriving it.
+### What we already test (read these first)
+
+| Area | Files |
+|------|--------|
+| Envelope mutation / tamper | `adversarial_test.go` |
+| Signed-hostile envelopes (trusted key, bad headers/payload) | `adversarial_envelope_test.go` |
+| Full `Verify` semantics under signed lies | `adversarial_semantics_test.go` |
+| Hybrid both-must-pass | `hybrid_test.go` |
+| Canonical CBOR / digest identity | `canonical/canonical_test.go` |
+| Fuzz seeds + targets | `fuzz_test.go` |
+| Decision, controls, replay, timing | `decision_test.go`, `timeout_semantics_test.go` |
+| Issuer / role / EP binding | `issuer_binding_test.go`, `anchor_validation_test.go` |
+| Scope and path traversal | `scope_test.go`, `scope_hardening_test.go` |
+| Delegation monotonicity | `delegation_test.go` |
+| Input omission / NOT_PERFORMED | `input_omission_test.go`, `commitment_mat_absence_test.go` |
+| Chain link vs envelope malleability | `chain_test.go` |
+| Conformance completeness (every check/code pinned) | `conformance/` |
+
+Prefer **signed-hostile** inputs over mutating sealed bytes. High-value residual
+questions: does each check compare inputs from **independent** parties (or only
+values the party under judgment chose)? What happens under **partial disclosure**
+(`not_performed` vs `passed`)? What holds when **wall-clock** expiry and signed
+validity windows disagree? Does the **WASM** build behave like the native path?
 
 ## Reporting a vulnerability
 
@@ -79,27 +116,24 @@ see the licence footer below.
 
 ## Scope
 
-**In scope:** this repository. `xap-go` is the **verification-side** reference
-SDK — it holds no signing keys and performs no issuance or enforcement. The
-security-relevant surface is the verification path: parsing of **untrusted**
-MAT / receipt / commitment envelopes, COSE_Sign1 signature verification
-(including the hybrid ECDSA-P384 + ML-DSA-65 both-must-pass check), CBOR
-canonicalization and digest recomputation, delegation and commitment validation,
-constraint evaluation, the CLI, and the WASM build. Also in scope: the protocol
-and schema themselves, reported at
-[xap-spec](https://github.com/Vidimuslabs/xap-spec).
+**In scope:** this repository and [xap-spec](https://github.com/Vidimuslabs/xap-spec).
+`xap-go` is the **verification-side** reference SDK — it holds no signing keys and
+performs no issuance or enforcement. The security-relevant surface is the
+verification path: parsing of **untrusted** MAT / receipt / commitment envelopes,
+COSE_Sign1 signature verification (including the hybrid ECDSA-P384 + ML-DSA-65
+both-must-pass check), CBOR canonicalization and digest recomputation, delegation
+and commitment validation, constraint evaluation, the CLI, and the WASM build
+built from this tree. Protocol and schema issues belong with xap-spec.
 
-**Out of scope, and please do not test against them:** Vidimus Labs production
-infrastructure, including `vidimuslabs.com`, `api.vidimuslabs.com`, any
-`*.vidimuslabs.com` host, and the DNS and edge configuration behind them. These
-are live systems serving real traffic; attacking them is not authorized by this
-policy and the safe harbor above does not extend to them. The in-browser
-verifier at `/verify` runs this SDK compiled to WASM — attack the SDK locally
-instead, where you can also see more. The private enforcement engine and server
-are not published and are not in scope.
+**Out of scope — do not test these (safe harbor does not cover them):**
 
-Also out of scope: volumetric denial of service, social engineering of Vidimus
-Labs staff or contractors, and physical attacks.
+- Any live Vidimus host: `vidimuslabs.com`, `api.vidimuslabs.com`,
+  `*.vidimuslabs.com`, and DNS/edge configuration behind them. That includes the
+  public `/verify` page. Attack a **local** build of this SDK (or local WASM)
+  instead.
+- The private enforcement engine and server (not published; not this invite).
+- Volumetric denial of service, social engineering of Vidimus Labs staff or
+  contractors, and physical attacks.
 
 **Resource exhaustion — where the line sits, because the two sides of it look
 alike.** A single input that makes a parse, decode or verify path allocate without

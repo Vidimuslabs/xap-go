@@ -22,6 +22,26 @@ licensor here, so the patent license in Section 3 of the Apache License is
 granted by the party that holds the patents.
 
 That grant reaches this Work. xap-go is the verification side of XAP: it holds
-no signing keys and performs neither issuance nor enforcement. The licensed
-enforcement engine is a separate work, distributed separately under separate
-terms, and nothing in this license grants rights in it.
+no signing keys and performs neither issuance nor enforcement. The production
+XAP enforcement engine is a separate work — proprietary, commercially licensed
+software distributed separately under separate terms — and nothing in this
+license grants rights in it.
+
+---
+
+Relation to the planned XAP royalty-free patent covenant
+
+Apache 2.0 Section 3 is a patent grant for this Work (the verifier and related
+code in this repository). Separately, Vidimus Labs intends to publish a
+royalty-free patent covenant covering independent implementation of the XAP
+protocol under covered XAP patent rights, as defined in the final covenant.
+That covenant is not this license; final terms are pending counsel review and
+will be published at https://vidimuslabs.com/ip.
+
+Until the covenant is published, public statements about it describe intent
+rather than an executed grant. The covenant does not extend to AGIV, CVEAR, or
+AIRAP. It does not make Vidimus Labs proprietary software open source. See
+https://vidimuslabs.com/ip and the xap-spec LICENSE.md for the full position.
+
+No freedom-to-operate clearance is given or implied. Nothing here is legal
+advice.

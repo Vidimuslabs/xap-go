@@ -88,9 +88,17 @@ patent-pending.
 Apache License 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Free to use,
 modify, and redistribute.
 
-Apache 2.0 Section 3 carries a patent grant, made here by Yandeh Holdings Inc. as
-assignee of the XAP portfolio. It reaches this Work — the verification side. The
-licensed enforcement engine is a separate work under separate terms.
+Apache 2.0 Section 3 carries a patent grant for **this Work** (the verification
+side), made here by Yandeh Holdings Inc. as assignee of the XAP portfolio. The
+production XAP enforcement engine is separate proprietary software under
+separate commercial terms — nothing here grants rights in it.
+
+Separately, Vidimus Labs **intends** to publish a royalty-free patent covenant
+covering independent implementation of the XAP protocol under covered XAP
+patent rights (final terms pending counsel review). That covenant is not this
+Apache license; see [`NOTICE`](NOTICE) and
+[vidimuslabs.com/ip](https://vidimuslabs.com/ip). The covenant does not extend
+to AGIV, CVEAR, or AIRAP and does not make Vidimus Labs software open source.
 
 ---
 

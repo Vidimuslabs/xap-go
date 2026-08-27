@@ -29,17 +29,17 @@ license grants rights in it.
 
 ---
 
-Relation to the planned XAP royalty-free patent covenant
+Relation to the planned XAP patent pledge
 
 Apache 2.0 Section 3 is a patent grant for this Work (the verifier and related
-code in this repository). Separately, Vidimus Labs intends to publish a
-royalty-free patent covenant covering independent implementation of the XAP
-protocol under covered XAP patent rights, as defined in the final covenant.
-That covenant is not this license; final terms are pending counsel review and
-will be published at https://vidimuslabs.com/ip.
+code in this repository). Separately, Vidimus Labs intends a royalty-free
+patent pledge (covenant) so others can implement the XAP protocol under covered
+XAP patent rights, as defined in the final instrument — without a royalty to us
+for those claims. That pledge is not this license; final terms are pending
+counsel review and will be published at https://vidimuslabs.com/ip.
 
 Until the covenant is published, public statements about it describe intent
-rather than an executed grant. The covenant does not extend to AGIV, CVEAR, or
+rather than an executed grant. The pledge does not extend to AGIV, CVEAR, or
 AIRAP. It does not make Vidimus Labs proprietary software open source. See
 https://vidimuslabs.com/ip and the xap-spec LICENSE.md for the full position.
 

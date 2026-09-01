@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	github.com/Vidimuslabs/xap-spec v0.2.1
 	github.com/cloudflare/circl v1.6.4
-	github.com/fxamacker/cbor/v2 v2.9.2
+	github.com/fxamacker/cbor/v2 v2.9.3
 	github.com/veraison/go-cose v1.3.0
 )
 

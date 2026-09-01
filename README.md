@@ -93,12 +93,12 @@ side), made here by Yandeh Holdings Inc. as assignee of the XAP portfolio. The
 production XAP enforcement engine is separate proprietary software under
 separate commercial terms — nothing here grants rights in it.
 
-Separately, Vidimus Labs **intends** a royalty-free patent pledge so others can
-implement the XAP protocol under covered XAP patent rights without a royalty to
-us (final terms pending counsel). That pledge is not this Apache license; see
-[`NOTICE`](NOTICE) and [vidimuslabs.com/ip](https://www.vidimuslabs.com/ip). It
-does not extend to AGIV, CVEAR, or AIRAP and does not make Vidimus Labs software
-open source.
+Separately, Vidimus Labs **intends** a humanitarian **covenant not to sue** so
+others can implement XAP under covered XAP patent claims without us asserting
+those claims (final terms, including export-control conditions, pending
+counsel). That covenant is not this Apache license; see [`NOTICE`](NOTICE) and
+[vidimuslabs.com/ip](https://www.vidimuslabs.com/ip). It does not extend to
+AGIV, CVEAR, or AIRAP and does not make Vidimus Labs software open source.
 
 ---
 

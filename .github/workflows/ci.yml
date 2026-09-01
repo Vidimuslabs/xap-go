@@ -30,9 +30,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # xap-spec is a published module now, not a sibling checkout. Proving it
-      # resolves from the proxy is the whole point of the flip, so fail loudly
-      # here rather than three steps later with a compile error.
+      # xap-spec must resolve as a published module. Fail here if go.mod still
+      # replaces a Vidimuslabs path — consumers ignore replace, so the module
+      # would be uninstallable.
       - name: go mod download
         run: go mod download
 
@@ -71,11 +71,6 @@ jobs:
           # one tool carrying its own availability risk. The proxy verifies
           # against the checksum database, and it installs outside the checkout,
           # so the tool is not part of what it scans.
-          #
-          # Kept identical to the live ci.yml gitleaks step ON PURPOSE. This file
-          # is a prepared replacement, so every divergence from the workflow it
-          # replaces is a regression waiting to be dropped in at the flip — which
-          # is exactly what happened to this step, and why it is called out here.
           go install github.com/zricethezav/gitleaks/v8@v8.18.4
           gitleaks detect --source . --no-banner --redact --exit-code 1
 

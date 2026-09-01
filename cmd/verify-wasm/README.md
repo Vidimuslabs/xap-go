@@ -29,16 +29,12 @@ info, so the digest is a function of the resolved module graph and the toolchain
 as well as the source. Bumping a `require` changes it, so does bumping the `go`
 directive, and so does editing this command's own source.
 
-One caveat governs every row below, and it is the reason the rows are keyed the
-way they are. `go.mod` has carried `replace github.com/Vidimuslabs/xap-spec =>
-../xap-spec` since this module's first commit, so **no build in this history ever
-resolved `xap-spec` from the module proxy** — the `require` line was overridden
-by whatever the sibling checkout held at build time, and that state is recorded
-nowhere. Naming a row by its `xap-spec` version would therefore invite someone to
-reproduce it against a published version and get a different digest, so each row
-names an xap-go commit it can be rebuilt from instead: from there `go.mod`, the
-`go` directive and this command's source are all recoverable. The caveat disappears
-when the `replace` drops at public release, and the digest changes when it does.
+Historical rows are keyed by xap-go commit, not `xap-spec` version: until this
+module was published, `go.mod` carried `replace github.com/Vidimuslabs/xap-spec =>
+../xap-spec`, so those builds resolved whatever the sibling checkout held, not a
+published version. Current `go.mod` has no replace; new digests are a function of
+the published module graph. Each historical row still names the xap-go commit it
+can be rebuilt from.
 
 Digest history, since each entry is a claim someone may want to check:
 

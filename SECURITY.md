@@ -111,8 +111,9 @@ If a third party brings action against you for research conducted in good faith
 under this policy, we will make that authorization clear.
 
 Apache 2.0 §3 grants you a patent licence for this Work, which covers building
-and running the analysis tooling you need to attack it. XAP is patent-pending;
-see the licence footer below.
+and running the analysis tooling you need to attack it. XAP is covered by U.S.
+Patent No. US-12,726,364-B1 (issued September 1, 2026); see the licence footer
+below.
 
 ## Scope
 

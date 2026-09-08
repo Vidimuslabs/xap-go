@@ -85,6 +85,16 @@ func (m *MAT) ValidateStructure() error {
 	if m.Issuer.ID == "" {
 		return fmt.Errorf("MAT missing issuer id")
 	}
+	// A MAT that names a machine identity must name a well-formed one: an
+	// identity is optional (¶0041 lets an artifact bind to no specific machine),
+	// but once present its kind is read to decide how the machine proved itself,
+	// so a kind that its material does not support is a malformed MAT, not a
+	// permissive one.
+	if !identityUnset(m.MachineIdentity) {
+		if err := m.MachineIdentity.Validate(); err != nil {
+			return fmt.Errorf("MAT %s machine identity: %w", m.ID, err)
+		}
+	}
 	if m.Replay.NotBefore == "" || m.Replay.NotAfter == "" {
 		return fmt.Errorf("MAT missing validity interval")
 	}

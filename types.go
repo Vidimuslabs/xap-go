@@ -18,7 +18,11 @@
 // transcribed in xap-spec/docs/SPEC.md.
 package xap
 
-import "github.com/Vidimuslabs/xap-spec/constants"
+import (
+	"fmt"
+
+	"github.com/Vidimuslabs/xap-spec/constants"
+)
 
 // Re-export the protocol version so SDK callers need not import constants
 // directly for the common case.
@@ -29,12 +33,66 @@ const ProtocolVersion = constants.ProtocolVersion
 // The identity may be a raw public key, a certificate reference, a hardware
 // attestation-bound identifier, or a composite of several anchors.
 type MachineIdentity struct {
-	// Kind is one of "public_key", "cert_ref", "attestation", "composite".
+	// Kind names how this identity is established and therefore which field
+	// below carries it: one of the values in constants.IdentityKind. It is not
+	// decorative — a relying party reads it to learn whether a machine proved
+	// itself with a bare key or with hardware attestation — so Validate requires
+	// it to agree with the material present.
 	Kind        string            `cbor:"kind"`
 	PublicKey   []byte            `cbor:"public_key,omitempty"`
 	CertRef     string            `cbor:"cert_ref,omitempty"`
 	Attestation *AttestationRef   `cbor:"attestation,omitempty"`
 	Composite   []MachineIdentity `cbor:"composite,omitempty"`
+}
+
+// Validate reports whether the identity's kind is a recognized discriminant and
+// agrees with the material actually present (SCHEMA.md, field 122).
+//
+// Kind was previously unread anywhere in the SDK: the type comment named an
+// enum, but a MAT could authorize — and a commitment could present — an
+// identity whose kind said "attestation" while it carried only a bare public
+// key, or a kind outside the enum entirely, and nothing objected. Kind is bound
+// by the issuer's signature, so a lying kind takes a malicious issuer rather
+// than an outside party; but a verifier that never checks the discriminant it
+// hands a relying party is asserting a shape it did not confirm. This closes
+// that gap on the verification side, where the identity is read.
+//
+// The check is by-kind rather than "exactly one field set" because a kind is a
+// claim about a specific field, not merely a claim that some field is present:
+// an attestation-kind identity that happens to carry a public key is still
+// failing to carry the attestation its kind promises.
+func (m MachineIdentity) Validate() error {
+	kind := constants.IdentityKind(m.Kind)
+	if !kind.Valid() {
+		return fmt.Errorf("machine identity kind %q is not a recognized identity kind", m.Kind)
+	}
+	switch kind {
+	case constants.IdentityKindPublicKey:
+		if len(m.PublicKey) == 0 {
+			return fmt.Errorf("machine identity kind %q carries no public key", m.Kind)
+		}
+	case constants.IdentityKindCertRef:
+		if m.CertRef == "" {
+			return fmt.Errorf("machine identity kind %q carries no cert ref", m.Kind)
+		}
+	case constants.IdentityKindAttestation:
+		if m.Attestation == nil {
+			return fmt.Errorf("machine identity kind %q carries no attestation reference", m.Kind)
+		}
+	case constants.IdentityKindComposite:
+		if len(m.Composite) == 0 {
+			return fmt.Errorf("machine identity kind %q carries no composite members", m.Kind)
+		}
+		// A composite is only as well-formed as its members: an outer kind that
+		// agrees with a non-empty composite list still lies if a member's own
+		// kind does not match its material.
+		for i := range m.Composite {
+			if err := m.Composite[i].Validate(); err != nil {
+				return fmt.Errorf("composite member %d: %w", i, err)
+			}
+		}
+	}
+	return nil
 }
 
 // AttestationRef references hardware-bound attestation evidence (FIG. 7, ¶0059).

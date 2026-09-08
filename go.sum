@@ -1,11 +1,9 @@
-github.com/Vidimuslabs/xap-spec v0.2.2-0.20260908033736-fac64b623994 h1:GfFik+Ah8SXtznf9oXGA/0/nBEa5c4s7pN/SGVPq5bo=
-github.com/Vidimuslabs/xap-spec v0.2.2-0.20260908033736-fac64b623994/go.mod h1:8iEBNZLozkKKC7veDyg6C4w7KT6A7g/jVKY00b5Czdk=
 github.com/Vidimuslabs/xap-spec v0.2.2 h1:3xJVLlTzMHHc95Nxsq4lNs23sMqGYGfA4C3qfIIiSS0=
 github.com/Vidimuslabs/xap-spec v0.2.2/go.mod h1:8iEBNZLozkKKC7veDyg6C4w7KT6A7g/jVKY00b5Czdk=
 github.com/cloudflare/circl v1.6.4 h1:pOXuDTCEYyzydgUpQ0CQz3LsinKjiSk6nNP5Lt5K64U=
 github.com/cloudflare/circl v1.6.4/go.mod h1:YxarevkLlbaHuWsxG6vmYNWBEsSp4pnp7j+4VljMavY=
-github.com/fxamacker/cbor/v2 v2.9.2 h1:X4Ksno9+x3cz0TZv69ec1hxP/+tymuR8PXQJyDwfh78=
-github.com/fxamacker/cbor/v2 v2.9.2/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
+github.com/fxamacker/cbor/v2 v2.9.3 h1:oQBnFATpNdY8gJHTndDDv5Xl4QqNaz51G5LLEPhng3Q=
+github.com/fxamacker/cbor/v2 v2.9.3/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
 github.com/veraison/go-cose v1.3.0 h1:2/H5w8kdSpQJyVtIhx8gmwPJ2uSz1PkyWFx0idbd7rk=
 github.com/veraison/go-cose v1.3.0/go.mod h1:df09OV91aHoQWLmy1KsDdYiagtXgyAwAl8vFeFn1gMc=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=

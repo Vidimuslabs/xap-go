@@ -81,7 +81,7 @@ conformance vectors live in **[xap-spec](https://github.com/Vidimuslabs/xap-spec
 ## Status
 
 Verify-only reference SDK · protocol `xap-1.0.0` (frozen) · hybrid post-quantum ·
-patent-pending.
+U.S. Patent No. US-12,726,364-B1.
 
 ## License
 
@@ -102,4 +102,4 @@ AGIV, CVEAR, or AIRAP and does not make Vidimus Labs software open source.
 
 ---
 
-Patent pending. Portfolio notice: [vidimuslabs.com/ip](https://www.vidimuslabs.com/ip).
+U.S. Patent No. US-12,726,364-B1 (issued September 1, 2026). Portfolio notice: [vidimuslabs.com/ip](https://www.vidimuslabs.com/ip).

@@ -11,11 +11,11 @@
 // no signing keys and no issuance or enforcement logic — those live in the
 // private engine and server. Nothing here imports a private package.
 //
-// Spec authority: the patent specification of U.S. patent application
-// 19/570,167, as amended by the preliminary amendment filed in that
-// application. Paragraph anchors (¶NNNN) in comments cite the amended
-// specification for every protocol-semantic decision. The protocol layer is
-// transcribed in xap-spec/docs/SPEC.md.
+// Spec authority: the specification of U.S. Patent No. US-12,726,364-B1, issued
+// September 1, 2026 from application 19/570,167 (including the preliminary
+// amendment filed in that application). Paragraph anchors (¶NNNN) in comments
+// cite that specification for every protocol-semantic decision. The protocol
+// layer is transcribed in xap-spec/docs/SPEC.md.
 package xap
 
 import (
